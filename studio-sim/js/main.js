@@ -5,6 +5,11 @@ const CANVAS_W = 720;
 const CANVAS_H = 405;
 const T = 24; // tile size in world pixels
 
+// Touch device detection — affects shoot-direction mapping (screen vs world)
+let IS_TOUCH = (typeof window !== 'undefined' && window.matchMedia)
+    ? window.matchMedia('(hover: none) and (pointer: coarse)').matches
+    : false;
+
 // === MODULAR MAP SYSTEM ===
 // Define rooms as modules. Corridors auto-generated from connections.
 // WorldGrid auto-built. Collisions always consistent.
@@ -819,7 +824,8 @@ function init() {
 function resize() {
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
-    const isTouch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+    IS_TOUCH = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+    const isTouch = IS_TOUCH;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     // On touch, reserve bottom band for twin-stick controls
@@ -3087,20 +3093,28 @@ function updateDungeon() {
 
     updateJumpAndTricks();
 
-    // Shooting — arrows follow SCREEN direction (up=up on screen), 8 directions with diagonals
+    // Shooting — device-aware direction:
+    //   PC: arrows fire in WORLD (isometric) directions — up arrow = world-north (up-right on screen)
+    //   Touch/mobile: right thumbstick sets arrow keys from SCREEN space, so convert screen→world via inverse iso
     if (DG.fireCooldown > 0) DG.fireCooldown--;
     if (jumpHeight >= -1) {
-        let sx = 0, sy = 0;
-        if (keys['arrowup']) sy -= 1;
-        if (keys['arrowdown']) sy += 1;
-        if (keys['arrowleft']) sx -= 1;
-        if (keys['arrowright']) sx += 1;
-        if ((sx || sy) && DG.fireCooldown <= 0) {
-            const slen = Math.sqrt(sx*sx+sy*sy); sx/=slen; sy/=slen;
-            // Convert screen direction to world direction (inverse iso)
-            // Screen (sx,sy) → world: wx = sx + 2*sy, wy = 2*sy - sx (simplified inverse)
-            const wx = sx + sy;
-            const wy = sy - sx;
+        let ix = 0, iy = 0;
+        if (keys['arrowup']) iy -= 1;
+        if (keys['arrowdown']) iy += 1;
+        if (keys['arrowleft']) ix -= 1;
+        if (keys['arrowright']) ix += 1;
+        if ((ix || iy) && DG.fireCooldown <= 0) {
+            const ilen = Math.sqrt(ix*ix+iy*iy); ix/=ilen; iy/=ilen;
+            let wx, wy;
+            if (IS_TOUCH) {
+                // Screen→world inverse iso so stick direction = on-screen arrow direction
+                wx = ix + iy;
+                wy = iy - ix;
+            } else {
+                // PC: raw world direction (isometric mapping)
+                wx = ix;
+                wy = iy;
+            }
             const wlen = Math.sqrt(wx*wx+wy*wy) || 1;
             const dx = (wx/wlen) * DG.playerShotSpeed;
             const dy = (wy/wlen) * DG.playerShotSpeed;
