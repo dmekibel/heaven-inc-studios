@@ -201,7 +201,7 @@ const BOARD_FLIPS = {
     'down+left':  { name: 'INWARD HEEL', rotation: 360, duration: 14, type: 'flip' },
     'down+right': { name: 'TRE FLIP', rotation: -720, duration: 16, type: 'flip' },
 };
-let gameMode = 'studio'; // 'studio' or 'dungeon'
+let gameMode = 'title'; // 'title', 'studio', or 'dungeon'
 let dungeonTransition = 0; // fade timer for door transition
 let meetingState = null; // null or { phase, timer, speakerIdx, seats }
 
@@ -858,11 +858,210 @@ function showTextAsBubbles(agent, text) {
     }
 }
 
+// === SHARED PLAYER MOVEMENT — used by both studio and dungeon ===
+function updatePlayerMovement() {
+    let mx = 0, my = 0;
+    if (keys['w']) my -= 1;
+    if (keys['s']) my += 1;
+    if (keys['a']) mx -= 1;
+    if (keys['d']) mx += 1;
+    const mLen = Math.sqrt(mx * mx + my * my);
+    if (mLen > 0) { mx /= mLen; my /= mLen; }
+
+    const skating = skateMode;
+    const spd = skating ? player.speed * 1.0 : player.speed;
+
+    if (skating) {
+        if (mx || my) {
+            const targetAngle = Math.atan2(my, mx);
+            if (player.skateAngle === null) player.skateAngle = targetAngle;
+            else {
+                let diff = targetAngle - player.skateAngle;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                const absDiff = Math.abs(diff);
+                if (absDiff > Math.PI * 0.75) player.skateAngle = targetAngle;
+                else player.skateAngle += diff * (absDiff > Math.PI * 0.3 ? 0.15 : 0.06);
+            }
+            player.vx = (player.vx || 0) * 0.9 + Math.cos(player.skateAngle) * spd * 0.12;
+            player.vy = (player.vy || 0) * 0.9 + Math.sin(player.skateAngle) * spd * 0.12;
+        } else if (player.skateAngle !== null) {
+            player.vx = (player.vx || 0) * 0.988;
+            player.vy = (player.vy || 0) * 0.988;
+        }
+        const vSpeed = Math.sqrt((player.vx||0)**2 + (player.vy||0)**2);
+        if (vSpeed > 0.3 && player.skateAngle !== null) {
+            const bcos = Math.cos(player.skateAngle), bsin = Math.sin(player.skateAngle);
+            const along = player.vx * bcos + player.vy * bsin;
+            const perp = -player.vx * bsin + player.vy * bcos;
+            const driftRatio = Math.abs(perp) / (Math.abs(along) + Math.abs(perp) + 0.01);
+            const grip = 0.92 - driftRatio * 0.3;
+            player.vx = along * bcos - (perp * grip) * bsin;
+            player.vy = along * bsin + (perp * grip) * bcos;
+        }
+        if (player.skateAngle !== null) {
+            const facingAngles = { right: 0, 'down-right': Math.PI/4, down: Math.PI/2, 'down-left': Math.PI*3/4, left: Math.PI, 'up-left': -Math.PI*3/4, up: -Math.PI/2, 'up-right': -Math.PI/4 };
+            const ca = facingAngles[player.facing] || 0;
+            const p1 = player.skateAngle + Math.PI/2, p2 = player.skateAngle - Math.PI/2;
+            let d1 = p1 - ca; while (d1 > Math.PI) d1 -= Math.PI*2; while (d1 < -Math.PI) d1 += Math.PI*2;
+            let d2 = p2 - ca; while (d2 > Math.PI) d2 -= Math.PI*2; while (d2 < -Math.PI) d2 += Math.PI*2;
+            player.facing = angleToFacing8(Math.abs(d1) < Math.abs(d2) ? p1 : p2);
+        }
+    } else {
+        player.skateAngle = null;
+        if (mx || my) player.facing = angleToFacing8(Math.atan2(my, mx));
+        player.vx = mx * spd;
+        player.vy = my * spd;
+    }
+    player.vx = Math.max(-3.5, Math.min(3.5, player.vx || 0));
+    player.vy = Math.max(-3.5, Math.min(3.5, player.vy || 0));
+}
+
+// === SHARED JUMP + TRICKS — used by both studio and dungeon ===
+function updateJumpAndTricks() {
+    const skating = skateMode;
+    if (keys[' '] && jumpHeight === 0) {
+        keys[' '] = false;
+        jumpVel = skating ? -3.5 : -2.5;
+        boardFlipState = null;
+        bodySpinAngle = 0;
+    }
+    // Tricks mid-air
+    if (jumpHeight < -3) {
+        // A/D mid-air = body spin (works with or without skateboard)
+        if (keys['a']) bodySpinAngle += 8;
+        if (keys['d']) bodySpinAngle -= 8;
+        // Visually rotate character facing based on spin angle
+        if (Math.abs(bodySpinAngle) > 10) {
+            const baseAngle = Math.atan2(player.vy || 0, player.vx || 0);
+            player.facing = angleToFacing8(baseAngle + bodySpinAngle * Math.PI / 180);
+        }
+        // Arrows mid-air = board tricks (skating only)
+        if (skating && !boardFlipState) {
+            const tu = keys['arrowup'], td = keys['arrowdown'];
+            const tl = keys['arrowleft'], tr = keys['arrowright'];
+            let flipKey = '';
+            if (tu && tl) flipKey = 'up+left';
+            else if (tu && tr) flipKey = 'up+right';
+            else if (td && tl) flipKey = 'down+left';
+            else if (td && tr) flipKey = 'down+right';
+            else if (tu) flipKey = 'up';
+            else if (td) flipKey = 'down';
+            else if (tl) flipKey = 'left';
+            else if (tr) flipKey = 'right';
+            if (flipKey && BOARD_FLIPS[flipKey]) {
+                const f = BOARD_FLIPS[flipKey];
+                boardFlipState = { name: f.name, rotation: f.rotation, duration: f.duration, timer: 0, landed: false, type: f.type };
+            }
+        }
+    }
+    if (boardFlipState) {
+        boardFlipState.timer++;
+        if (boardFlipState.timer >= boardFlipState.duration) boardFlipState.landed = true;
+    }
+    // Gravity
+    if (jumpHeight < 0 || jumpVel !== 0) {
+        jumpHeight += jumpVel; jumpVel += 0.25;
+        if (jumpHeight >= 0) {
+            jumpHeight = 0; jumpVel = 0;
+            // Score tricks on landing
+            if (boardFlipState) {
+                if (boardFlipState.landed) {
+                    trickCombo++;
+                    const combo = trickCombo > 1 ? ` x${trickCombo}` : '';
+                    trickDisplay = { text: boardFlipState.name + combo, timer: 60 };
+                } else {
+                    trickDisplay = { text: 'BAIL!', timer: 40 };
+                    trickCombo = 0;
+                }
+            } else if (Math.abs(bodySpinAngle) >= 150) {
+                const dir = bodySpinAngle > 0 ? 'BS' : 'FS';
+                const deg = Math.round(Math.abs(bodySpinAngle) / 180) * 180;
+                trickCombo++;
+                const combo = trickCombo > 1 ? ` x${trickCombo}` : '';
+                trickDisplay = { text: `${dir} ${deg}${combo}`, timer: 60 };
+            } else {
+                trickCombo = 0;
+            }
+            bodySpinAngle = 0;
+            boardFlipState = null;
+        }
+    }
+}
+
+function drawTitle() {
+    ctx.fillStyle = '#06020F';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    // Starfield
+    for (let i = 0; i < 50; i++) {
+        const sx = ((i * 73 + 17) % CANVAS_W);
+        const sy = ((i * 47 + 31) % CANVAS_H);
+        const b = 0.2 + Math.sin(time * 0.02 + i) * 0.15;
+        ctx.globalAlpha = b;
+        ctx.fillStyle = i % 3 === 0 ? '#FFD700' : '#FFFFFF';
+        ctx.fillRect(sx, sy, 1, 1);
+    }
+    ctx.globalAlpha = 1;
+
+    // Title glow
+    const glow = 0.7 + Math.sin(time * 0.03) * 0.15;
+    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 20 * glow;
+
+    // Title
+    const titleY = CANVAS_H * 0.28 + Math.sin(time * 0.02) * 3;
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('HEAVEN INC.', CANVAS_W / 2, titleY);
+    ctx.font = 'bold 12px monospace';
+    ctx.fillStyle = '#CC88DD';
+    ctx.fillText('S T U D I O S', CANVAS_W / 2, titleY + 22);
+    ctx.shadowBlur = 0;
+
+    // Character preview — CEO on skateboard
+    const cx = CANVAS_W / 2, cy = CANVAS_H * 0.52;
+    const bob = Math.sin(time * 0.04) * 2;
+    drawCharBody(cx, cy + bob, '#996B00', C.gold, 'right', false, 0);
+    drawCharHead(cx, cy + bob, '#DAA520', 'right', false, 0);
+    // Halo
+    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.8;
+    ctx.beginPath(); ctx.ellipse(cx, cy + bob - 22, 6, 2, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+    // Board under feet
+    ctx.fillStyle = '#8B4513'; ctx.fillRect(cx - 7, cy + bob + 8, 14, 4);
+    ctx.fillStyle = C.gold; ctx.fillRect(cx - 6, cy + bob + 9, 12, 2);
+
+    // Prompt
+    const flash = Math.sin(time * 0.06) > 0;
+    if (flash) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText('PRESS SPACE TO START', CANVAS_W / 2, CANVAS_H * 0.75);
+    }
+
+    // Credits
+    ctx.fillStyle = '#555'; ctx.font = '7px monospace';
+    ctx.fillText('WASD: Move  |  SHIFT: Skateboard  |  SPACE: Jump  |  ARROWS: Tricks', CANVAS_W / 2, CANVAS_H * 0.88);
+    ctx.fillText('ENTER: Chat  |  E: Interact', CANVAS_W / 2, CANVAS_H * 0.92);
+    ctx.textAlign = 'left';
+
+    // Vignette
+    const vigGrad = ctx.createRadialGradient(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W * 0.2, CANVAS_W / 2, CANVAS_H / 2, CANVAS_W * 0.6);
+    vigGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vigGrad.addColorStop(1, 'rgba(0, 0, 10, 0.6)');
+    ctx.fillStyle = vigGrad;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+}
+
 function loop() { requestAnimationFrame(loop); update(); draw(); }
 
 // === UPDATE ===
 function update() {
     time++;
+    if (gameMode === 'title') {
+        if (keys[' '] || keys['enter']) { keys[' '] = false; keys['enter'] = false; gameMode = 'studio'; }
+        return;
+    }
     if (gameMode === 'dungeon') { updateDungeon(); return; }
     if (dungeonTransition > 0) {
         dungeonTransition--;
@@ -887,194 +1086,46 @@ function update() {
     if (keys['-']) { keys['-'] = false; zoomStep(-1); }
     }
 
-    // Movement: WASD only (arrows are for tricks mid-air)
-    let mx = 0, my = 0;
-    if (!chatFocused) {
-    if (keys['w']) my -= 1;
-    if (keys['s']) my += 1;
-    if (keys['a']) mx -= 1;
-    if (keys['d']) mx += 1;
-    }
-    const mLen = Math.sqrt(mx * mx + my * my);
-    if (mLen > 0) { mx /= mLen; my /= mLen; }
-
-    const skating = skateMode;
-    const spd = skating ? player.speed * 1.3 : player.speed;
-
-    // Track facing direction — skating: WASD/arrows set direction, board follows smoothly
-    if (skating) {
-        if (mx || my) {
-            const targetAngle = Math.atan2(my, mx);
-            if (player.skateAngle === null) {
-                player.skateAngle = targetAngle;
-            } else {
-                // Steering — near-reversals snap instantly, else smooth
-                let diff = targetAngle - player.skateAngle;
-                while (diff > Math.PI) diff -= Math.PI * 2;
-                while (diff < -Math.PI) diff += Math.PI * 2;
-                const absDiff = Math.abs(diff);
-                if (absDiff > Math.PI * 0.75) {
-                    // Near-opposite — snap board to target, coast into fakie
-                    player.skateAngle = targetAngle;
-                } else {
-                    const steerRate = absDiff > Math.PI * 0.3 ? 0.15 : 0.06;
-                    player.skateAngle += diff * steerRate;
-                }
-            }
-            // Push in board direction
-            player.vx = (player.vx || 0) * 0.9 + Math.cos(player.skateAngle) * spd * 0.12;
-            player.vy = (player.vy || 0) * 0.9 + Math.sin(player.skateAngle) * spd * 0.12;
-        } else if (player.skateAngle !== null) {
-            // Coasting — rolls far, slow dampening like real wheels
-            player.vx = (player.vx || 0) * 0.988;
-            player.vy = (player.vy || 0) * 0.988;
-        }
-        // Drift — dynamic grip: sharp turns = more slide, gentle turns = tight
-        const vSpeed = Math.sqrt((player.vx||0)**2 + (player.vy||0)**2);
-        if (vSpeed > 0.3 && player.skateAngle !== null) {
-            const bcos = Math.cos(player.skateAngle), bsin = Math.sin(player.skateAngle);
-            const along = player.vx * bcos + player.vy * bsin;
-            const perp = -player.vx * bsin + player.vy * bcos;
-            // How much velocity is perpendicular to board = how much we're drifting
-            const driftRatio = Math.abs(perp) / (Math.abs(along) + Math.abs(perp) + 0.01);
-            // More drift = looser grip (cool slide), less drift = tight grip
-            const grip = 0.92 - driftRatio * 0.3; // ranges 0.62 (heavy drift) to 0.92 (straight)
-            player.vx = along * bcos - (perp * grip) * bsin;
-            player.vy = along * bsin + (perp * grip) * bcos;
-        }
-        // Set facing perpendicular to board, pick closest to current facing
-        if (player.skateAngle !== null) {
-            const facingAngles = { right: 0, 'down-right': Math.PI/4, down: Math.PI/2, 'down-left': Math.PI*3/4, left: Math.PI, 'up-left': -Math.PI*3/4, up: -Math.PI/2, 'up-right': -Math.PI/4 };
-            const currentAngle = facingAngles[player.facing] || 0;
-            const perp1 = player.skateAngle + Math.PI / 2;
-            const perp2 = player.skateAngle - Math.PI / 2;
-            let d1 = perp1 - currentAngle; while (d1 > Math.PI) d1 -= Math.PI * 2; while (d1 < -Math.PI) d1 += Math.PI * 2;
-            let d2 = perp2 - currentAngle; while (d2 > Math.PI) d2 -= Math.PI * 2; while (d2 < -Math.PI) d2 += Math.PI * 2;
-            const bodyAngle = Math.abs(d1) < Math.abs(d2) ? perp1 : perp2;
-            player.facing = angleToFacing8(bodyAngle);
-        }
-    } else {
-        player.skateAngle = null;
-        if (mx || my) player.facing = angleToFacing8(Math.atan2(my, mx));
-        player.vx = mx * spd;
-        player.vy = my * spd;
-    }
+    updatePlayerMovement();
 
     // Cap max velocity
     const maxV = 3.5;
     player.vx = Math.max(-maxV, Math.min(maxV, player.vx || 0));
     player.vy = Math.max(-maxV, Math.min(maxV, player.vy || 0));
 
-    // Move with collision - small steps, check all 4 corners
-    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(player.vx), Math.abs(player.vy))));
-    const stepX = player.vx / steps;
-    const stepY = player.vy / steps;
+    // Move with wall collision
     const r = 5;
-    for (let s = 0; s < steps; s++) {
-        const nx = player.x + stepX;
-        const wallOkX = isWalkable(nx - r, player.y - r) && isWalkable(nx + r, player.y - r) &&
-            isWalkable(nx - r, player.y + r) && isWalkable(nx + r, player.y + r);
-        // Furniture only blocks when grounded and not skating fast (skating should flow around)
-        const speed = Math.sqrt((player.vx||0)**2 + (player.vy||0)**2);
-        const furnBlock = !playerOnFurniture && jumpHeight >= -1 && speed < 2.5;
-        const furnOkX = !furnBlock || !hitsFurniture(nx, player.y, r - 2);
-        if (wallOkX && furnOkX) player.x = nx;
-        else { player.vx *= furnBlock ? 0 : 0.5; }
-        const ny = player.y + stepY;
-        const wallOkY = isWalkable(player.x - r, ny - r) && isWalkable(player.x + r, ny - r) &&
-            isWalkable(player.x - r, ny + r) && isWalkable(player.x + r, ny + r);
-        const furnOkY = !furnBlock || !hitsFurniture(player.x, ny, r - 2);
-        if (wallOkY && furnOkY) player.y = ny;
-        else { player.vy = 0; }
+    player.x += player.vx || 0;
+    player.y += player.vy || 0;
+    // Wall collision — push back per axis
+    if (!isWalkable(player.x - r, player.y) || !isWalkable(player.x + r, player.y)) {
+        player.x -= player.vx || 0; player.vx = 0;
     }
-
-    // Jump / Ollie — simple and clean
-    if (!chatFocused && keys[' '] && jumpHeight === 0) {
-        keys[' '] = false;
-        jumpVel = skating ? -3.5 : -2.5;
-        playerOnFurniture = false;
-        boardFlipState = null;
-        bodySpinAngle = 0;
+    if (!isWalkable(player.x, player.y - r) || !isWalkable(player.x, player.y + r)) {
+        player.y -= player.vy || 0; player.vy = 0;
     }
-
-    // === TRICKS (only mid-air) ===
-    if (jumpHeight < -3) {
-        // Body spin: A/D mid-air when walking (not skating)
-        if (!skating) {
-            if (keys['a']) bodySpinAngle += 8;
-            if (keys['d']) bodySpinAngle -= 8;
-        }
-        // Board tricks: arrows mid-air when skating
-        if (skating && !boardFlipState) {
-            const tu = keys['arrowup'];
-            const td = keys['arrowdown'];
-            const tl = keys['arrowleft'];
-            const tr = keys['arrowright'];
-            let flipKey = '';
-            if (tu && tl) flipKey = 'up+left';
-            else if (tu && tr) flipKey = 'up+right';
-            else if (td && tl) flipKey = 'down+left';
-            else if (td && tr) flipKey = 'down+right';
-            else if (tu) flipKey = 'up';
-            else if (td) flipKey = 'down';
-            else if (tl) flipKey = 'left';
-            else if (tr) flipKey = 'right';
-            if (flipKey && BOARD_FLIPS[flipKey]) {
-                const f = BOARD_FLIPS[flipKey];
-                boardFlipState = { name: f.name, rotation: f.rotation, duration: f.duration, timer: 0, landed: false, type: f.type };
-            }
+    // Furniture — soft push away (never traps, just nudges)
+    if (!playerOnFurniture && jumpHeight >= -1) {
+        const furn = hitsFurniture(player.x, player.y, r);
+        if (furn) {
+            const fcx = furn.x + furn.w / 2, fcy = furn.y + furn.d / 2;
+            const dx = player.x - fcx, dy = player.y - fcy;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            player.x += (dx / dist) * 1.5;
+            player.y += (dy / dist) * 1.5;
         }
     }
-    if (boardFlipState) {
-        boardFlipState.timer++;
-        if (boardFlipState.timer >= boardFlipState.duration) boardFlipState.landed = true;
-    }
 
-    // Auto-jump when moving off elevated edge
+    if (!chatFocused) updateJumpAndTricks();
+
+    // Auto-jump when moving off elevated edge (studio-only)
     if (jumpHeight === 0 && jumpVel === 0 && !playerOnFurniture) {
         const prevH = getHeightAt(player.x - (player.vx || 0), player.y - (player.vy || 0));
         const currH = getHeightAt(player.x, player.y);
         if (prevH - currH > 2) {
             const speed = Math.sqrt((player.vx||0)**2 + (player.vy||0)**2);
-            jumpVel = skating ? Math.min(-1.5, -speed * 0.8) : -1.5;
+            jumpVel = skateMode ? Math.min(-1.5, -speed * 0.8) : -1.5;
             jumpHeight = -(prevH - currH);
-        }
-    }
-    // Landing on furniture check
-    if (jumpHeight < 0 || jumpVel !== 0) {
-        jumpHeight += jumpVel;
-        jumpVel += 0.25;
-        // Check if landing on furniture
-        const furn = getFurnitureAt(player.x, player.y);
-        if (furn && jumpVel > 0 && jumpHeight >= -furn.h && jumpHeight < 0) {
-            // Land on top of furniture!
-            jumpHeight = -furn.h;
-            jumpVel = 0;
-            playerOnFurniture = true;
-        } else if (jumpHeight >= 0) {
-            jumpHeight = 0; jumpVel = 0;
-            playerOnFurniture = false;
-            // Land — simple trick scoring
-            if (boardFlipState) {
-                if (boardFlipState.landed) {
-                    trickCombo++;
-                    const combo = trickCombo > 1 ? ` x${trickCombo}` : '';
-                    trickDisplay = { text: boardFlipState.name + combo, timer: 60 };
-                } else {
-                    trickDisplay = { text: 'BAIL!', timer: 40 };
-                    trickCombo = 0;
-                }
-            } else if (Math.abs(bodySpinAngle) >= 150) {
-                const dir = bodySpinAngle > 0 ? 'BS' : 'FS';
-                const deg = Math.round(Math.abs(bodySpinAngle) / 180) * 180;
-                trickCombo++;
-                const combo = trickCombo > 1 ? ` x${trickCombo}` : '';
-                trickDisplay = { text: `${dir} ${deg}${combo}`, timer: 60 };
-            } else {
-                trickCombo = 0;
-            }
-            bodySpinAngle = 0;
-            boardFlipState = null;
         }
     }
     // Fall off furniture edge
@@ -1091,7 +1142,7 @@ function update() {
     }
 
     // Camera follow + clamp to world (faster when skating)
-    const camSpeed = skating ? 0.15 : 0.08;
+    const camSpeed = skateMode ? 0.15 : 0.08;
     camera.x += (player.x - camera.x) * camSpeed;
     camera.y += (player.y - camera.y) * camSpeed;
     // Clamp camera to world bounds (loose for iso)
@@ -1245,6 +1296,7 @@ function draw() {
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
+    if (gameMode === 'title') { drawTitle(); return; }
     if (gameMode === 'dungeon') { drawDungeon(); return; }
 
     // Door transition fade
@@ -1940,87 +1992,116 @@ function drawMinimap() {
 function drawCharBody(bx, by, bodyColor, shirtColor, facing, talking, talkTime) {
     const f = facing;
     const side = (f === 'left' || f === 'right');
-    const flip = f === 'left' ? -1 : 1;
+    const diag = f.includes('-'); // diagonal facing
+    const flip = (f === 'left' || f === 'down-left' || f === 'up-left') ? -1 : 1;
 
-    // FOP style: tiny stubby legs
+    // Legs — offset for diagonal
     ctx.fillStyle = '#333355';
-    if (side) {
+    if (diag) {
+        ctx.fillRect(bx - 1 + flip, by + 4, 3, 4);
+        ctx.fillRect(bx + flip * 3, by + 4, 3, 4);
+    } else if (side) {
         ctx.fillRect(bx - 1, by + 4, 3, 4);
         ctx.fillRect(bx + flip * 2, by + 4, 3, 4);
     } else {
         ctx.fillRect(bx - 3, by + 4, 3, 4);
         ctx.fillRect(bx + 1, by + 4, 3, 4);
     }
-    // FOP style: round squat body
+    // Body — slightly narrower for diagonals (3/4 view)
+    const bw = diag ? 6 : (side ? 5 : 7);
     ctx.fillStyle = bodyColor;
-    ctx.beginPath(); ctx.ellipse(bx, by + 1, side ? 5 : 7, 5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(bx + (diag ? flip : 0), by + 1, bw, 5, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = shirtColor;
-    ctx.beginPath(); ctx.ellipse(bx, by + 1, side ? 4 : 6, 4, 0, 0, Math.PI * 2); ctx.fill();
-    // Arms (little nubs)
-    if (!side) {
+    ctx.beginPath(); ctx.ellipse(bx + (diag ? flip : 0), by + 1, bw - 1, 4, 0, 0, Math.PI * 2); ctx.fill();
+    // Arms
+    if (diag) {
+        // 3/4 view: one arm more visible
+        ctx.fillStyle = shirtColor;
+        ctx.beginPath(); ctx.ellipse(bx + flip * 6, by + 1, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(bx - flip * 4, by + 2, 1.5, 1.5, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (side) {
+        ctx.fillStyle = shirtColor;
+        ctx.beginPath(); ctx.ellipse(bx + flip * 6, by + 1, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
+    } else {
         ctx.fillStyle = shirtColor;
         ctx.beginPath(); ctx.ellipse(bx - 7, by + 1, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
         ctx.beginPath(); ctx.ellipse(bx + 7, by + 1, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
-    } else {
-        ctx.fillStyle = shirtColor;
-        ctx.beginPath(); ctx.ellipse(bx + flip * 6, by + 1, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
     }
 }
 
 function drawCharHead(bx, by, hairColor, facing, talking, talkTime) {
     const f = facing;
     const side = (f === 'left' || f === 'right');
-    const flip = f === 'left' ? -1 : 1;
-    const back = f === 'up';
+    const diag = f.includes('-');
+    const flip = (f === 'left' || f === 'down-left' || f === 'up-left') ? -1 : 1;
+    const back = (f === 'up');
+    const backDiag = (f === 'up-left' || f === 'up-right');
+    const frontDiag = (f === 'down-left' || f === 'down-right');
 
-    // FOP style: BIG round head
+    // Head shape — offset for diagonals
+    const hx = bx + (diag ? flip * 1 : 0);
     ctx.fillStyle = C.skinTone;
-    ctx.beginPath(); ctx.ellipse(bx, by - 10, side ? 8 : 9, 9, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(hx, by - 10, (side || diag) ? 8 : 9, 9, 0, 0, Math.PI * 2); ctx.fill();
 
-    // Hair (big colorful FOP hair)
+    // Hair
     ctx.fillStyle = hairColor;
-    ctx.beginPath(); ctx.ellipse(bx, by - 17, side ? 9 : 10, 5, 0, Math.PI, Math.PI * 2); ctx.fill();
-    if (side) {
-        ctx.beginPath(); ctx.ellipse(bx - flip * 4, by - 12, 4, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(hx, by - 17, (side || diag) ? 9 : 10, 5, 0, Math.PI, Math.PI * 2); ctx.fill();
+    if (side || diag) {
+        ctx.beginPath(); ctx.ellipse(hx - flip * 4, by - 12, 4, 7, 0, 0, Math.PI * 2); ctx.fill();
     }
 
     if (back) {
+        // Full back — hair covers face
         ctx.fillStyle = hairColor;
-        ctx.beginPath(); ctx.ellipse(bx, by - 10, 9, 9, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx, by - 10, 9, 9, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (backDiag) {
+        // 3/4 back — partial face, one eye barely visible
+        ctx.fillStyle = hairColor;
+        ctx.beginPath(); ctx.ellipse(hx - flip * 2, by - 10, 8, 9, 0, 0, Math.PI * 2); ctx.fill();
+        // Peek of one eye
+        ctx.fillStyle = C.white;
+        ctx.beginPath(); ctx.ellipse(hx + flip * 4, by - 10, 2, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = C.black;
+        ctx.beginPath(); ctx.ellipse(hx + flip * 4.5, by - 9.5, 1, 1, 0, 0, Math.PI * 2); ctx.fill();
     } else if (side) {
-        // Big FOP eye
+        // Pure side — one big eye
         ctx.fillStyle = C.white;
-        ctx.beginPath(); ctx.ellipse(bx + flip * 3, by - 11, 4, 4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx + flip * 3, by - 11, 4, 4, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = C.black;
-        ctx.beginPath(); ctx.ellipse(bx + flip * 4, by - 10, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx + flip * 4, by - 10, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = C.white;
-        ctx.fillRect(bx + flip * 4, by - 12, 1, 1);
-        // Mouth
+        ctx.fillRect(hx + flip * 4, by - 12, 1, 1);
         ctx.fillStyle = talking ? '#FF4466' : '#DD8899';
-        if (talking) {
-            ctx.beginPath(); ctx.ellipse(bx + flip * 3, by - 5, 2 + Math.sin(talkTime * 0.3), 1.5, 0, 0, Math.PI * 2); ctx.fill();
-        } else {
-            ctx.fillRect(bx + flip * 2, by - 5, 3, 1);
-        }
+        if (talking) { ctx.beginPath(); ctx.ellipse(hx + flip * 3, by - 5, 2 + Math.sin(talkTime * 0.3), 1.5, 0, 0, Math.PI * 2); ctx.fill(); }
+        else ctx.fillRect(hx + flip * 2, by - 5, 3, 1);
+    } else if (frontDiag) {
+        // 3/4 front — two eyes, one bigger (closer)
+        ctx.fillStyle = C.white;
+        ctx.beginPath(); ctx.ellipse(hx + flip * 4, by - 11, 4, 4, 0, 0, Math.PI * 2); ctx.fill(); // close eye
+        ctx.beginPath(); ctx.ellipse(hx - flip * 1, by - 11, 3, 3.5, 0, 0, Math.PI * 2); ctx.fill(); // far eye
+        ctx.fillStyle = C.black;
+        ctx.beginPath(); ctx.ellipse(hx + flip * 5, by - 10, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx - flip * 0.5, by - 10, 1.5, 1.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = C.white;
+        ctx.fillRect(hx + flip * 5, by - 12, 1, 1);
+        ctx.fillRect(hx - flip * 1, by - 12, 1, 1);
+        ctx.fillStyle = talking ? '#FF4466' : '#DD8899';
+        if (talking) { ctx.beginPath(); ctx.ellipse(hx + flip * 2, by - 4, 2 + Math.sin(talkTime * 0.3), 1.5, 0, 0, Math.PI * 2); ctx.fill(); }
+        else ctx.fillRect(hx + flip * 1, by - 5, 3, 1);
     } else {
-        // Front: two big FOP eyes
+        // Pure front — two big eyes
         ctx.fillStyle = C.white;
-        ctx.beginPath(); ctx.ellipse(bx - 3, by - 11, 4, 4, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(bx + 3, by - 11, 4, 4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx - 3, by - 11, 4, 4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx + 3, by - 11, 4, 4, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = C.black;
-        ctx.beginPath(); ctx.ellipse(bx - 2, by - 10, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(bx + 4, by - 10, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx - 2, by - 10, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx + 4, by - 10, 2, 2, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = C.white;
-        ctx.fillRect(bx - 2, by - 12, 1, 1);
-        ctx.fillRect(bx + 4, by - 12, 1, 1);
-        // Mouth
+        ctx.fillRect(hx - 2, by - 12, 1, 1);
+        ctx.fillRect(hx + 4, by - 12, 1, 1);
         ctx.fillStyle = talking ? '#FF4466' : '#DD8899';
-        if (talking) {
-            const mw = 3 + Math.sin(talkTime * 0.3) * 2;
-            ctx.beginPath(); ctx.ellipse(bx, by - 4, mw, 2, 0, 0, Math.PI * 2); ctx.fill();
-        } else {
-            ctx.fillRect(bx - 2, by - 5, 4, 1);
-        }
+        if (talking) { const mw = 3 + Math.sin(talkTime * 0.3) * 2; ctx.beginPath(); ctx.ellipse(hx, by - 4, mw, 2, 0, 0, Math.PI * 2); ctx.fill(); }
+        else ctx.fillRect(hx - 2, by - 5, 4, 1);
     }
 }
 
@@ -2094,7 +2175,7 @@ function drawPlayer() {
     // Map 8-dir facing to 4-dir sprite (diagonals use nearest cardinal)
     const f = player.facing;
     const spriteMap = { 'down-right': 'right', 'down-left': 'left', 'up-right': 'right', 'up-left': 'left' };
-    const sf = spriteMap[f] || f; // sprite facing
+    const sf = spriteMap[f] || f;
     const side = (sf === 'left' || sf === 'right');
     const flip = (sf === 'left') ? -1 : 1;
     const back = sf === 'up';
@@ -2216,16 +2297,25 @@ function drawPlayer() {
     ctx.globalAlpha = 1;
 
     // Skateboard — with body spin + board flip animation
-    if (skating && (player.skateAngle !== null || boardFlipState) && (skateSpeed > 0.2 || boardFlipState || jumpHeight < -2)) {
+    if (skating) {
         ctx.save();
         ctx.translate(bx, by + 10);
-        // Base board angle
-        const wdx = Math.cos(player.skateAngle || 0);
-        const wdy = Math.sin(player.skateAngle || 0);
-        let isoAngle = Math.atan2((wdx + wdy) * 0.5, wdx - wdy);
-
-        // Body spin affects board angle too
-        if (jumpHeight < -2) isoAngle += bodySpinAngle * Math.PI / 180;
+        // Board angle — follows body during spin, follows skateAngle on ground
+        let isoAngle;
+        if (jumpHeight < -2 && Math.abs(bodySpinAngle) > 10) {
+            // Mid-air spinning: board follows character facing
+            const facingAngles = { right: 0, 'down-right': Math.PI/4, down: Math.PI/2, 'down-left': Math.PI*3/4, left: Math.PI, 'up-left': -Math.PI*3/4, up: -Math.PI/2, 'up-right': -Math.PI/4 };
+            const fAngle = facingAngles[player.facing] || 0;
+            // Board perpendicular to body facing, convert to iso
+            const bAngle = fAngle + Math.PI / 2;
+            const bcos = Math.cos(bAngle), bsin = Math.sin(bAngle);
+            isoAngle = Math.atan2((bcos + bsin) * 0.5, bcos - bsin);
+        } else {
+            // Normal: board follows skateAngle
+            const wdx = Math.cos(player.skateAngle || 0);
+            const wdy = Math.sin(player.skateAngle || 0);
+            isoAngle = Math.atan2((wdx + wdy) * 0.5, wdx - wdy);
+        }
 
         // Board trick visual
         let trickFlipScale = 1;
@@ -2248,11 +2338,14 @@ function drawPlayer() {
         ctx.fillRect(-7, -3, 14, 6);
         ctx.fillStyle = C.gold;
         ctx.fillRect(-6, -2, 12, 4);
+        // Grip tape stripe
         ctx.fillStyle = '#5C3A1A';
         ctx.fillRect(-4, -1, 8, 1);
+        // Nose/tail
         ctx.fillStyle = '#6B3410';
         ctx.fillRect(-8, -2, 2, 4);
         ctx.fillRect(6, -2, 2, 4);
+        // Wheels
         ctx.fillStyle = '#333';
         ctx.fillRect(-6, -4, 2, 1);
         ctx.fillRect(-6, 3, 2, 1);
@@ -2600,16 +2693,19 @@ function dgSpawnEnemies() {
         const ey = (2 + Math.random() * (DG.ROOM_H - 4)) * T;
         if (Math.abs(ex - player.x) < 40 && Math.abs(ey - player.y) < 40) continue;
         const isBoss = room.type === 'boss';
-        const types = ['chaser', 'shooter', 'charger'];
+        const fairyTypes = ['pixie', 'sprite', 'imp']; // chaser, shooter, charger
+        const fairyColors = ['#FF69B4', '#44FFAA', '#AA88FF', '#FF8844', '#44DDFF', '#FFDD44'];
         DG.enemies.push({
             x: ex, y: ey, vx: 0, vy: 0,
-            type: isBoss ? 'boss' : types[Math.floor(Math.random() * types.length)],
+            type: isBoss ? 'boss' : fairyTypes[Math.floor(Math.random() * fairyTypes.length)],
             hp: isBoss ? 20 + DG.floorNum * 10 : 2 + DG.floorNum,
             size: isBoss ? 16 : 10,
             speed: isBoss ? 0.6 : 0.4 + Math.random() * 0.4,
             damage: isBoss ? 2 : 1,
-            color: isBoss ? '#FF2244' : ['#FF4488', '#44AAFF', '#44FF88'][i % 3],
+            color: isBoss ? '#FF2244' : fairyColors[i % fairyColors.length],
             fireCooldown: 0, chargeTimer: 0, chargeDir: null,
+            wandAngle: Math.random() * Math.PI * 2, // wand rotation
+            floatPhase: Math.random() * Math.PI * 2, // fairy float offset
         });
     }
 }
@@ -2649,34 +2745,21 @@ function updateDungeon() {
 
     // === PLAYING ===
     camera.zoom += (camera.targetZoom - camera.zoom) * 0.3;
+    if (zoomCooldown > 0) zoomCooldown--;
+    if (keys['='] || keys['+']) { keys['='] = false; keys['+'] = false; zoomStep(1); }
+    if (keys['-']) { keys['-'] = false; zoomStep(-1); }
 
-    // Movement — always skateboard
-    let mx = 0, my = 0;
-    if (keys['w'] || keys['arrowup']) my -= 1;
-    if (keys['s'] || keys['arrowdown']) my += 1;
-    if (keys['a'] || keys['arrowleft']) mx -= 1;
-    if (keys['d'] || keys['arrowright']) mx += 1;
-    const mLen = Math.sqrt(mx * mx + my * my);
-    if (mLen > 0) { mx /= mLen; my /= mLen; }
+    // Shared movement + jump + tricks (identical to studio)
+    updatePlayerMovement();
 
-    const spd = player.speed * 1.3;
-    if (mx || my) {
-        player.vx = (player.vx || 0) * 0.88 + mx * spd * 0.14;
-        player.vy = (player.vy || 0) * 0.88 + my * spd * 0.14;
-        player.facing = angleToFacing8(Math.atan2(my, mx));
-    } else {
-        player.vx = (player.vx || 0) * 0.95;
-        player.vy = (player.vy || 0) * 0.95;
-    }
-    // Clamp
-    player.vx = Math.max(-3, Math.min(3, player.vx));
-    player.vy = Math.max(-3, Math.min(3, player.vy));
-    // Move with wall collision
+    // Apply velocity + dungeon wall collision
+    player.x += player.vx || 0;
+    player.y += player.vy || 0;
     const r = 5;
-    const nx = player.x + player.vx;
-    const ny = player.y + player.vy;
-    if (nx > r && nx < (DG.ROOM_W - 1) * T - r) player.x = nx; else player.vx *= -0.3;
-    if (ny > r && ny < (DG.ROOM_H - 1) * T - r) player.y = ny; else player.vy *= -0.3;
+    if (player.x < r + T) { player.x = r + T; player.vx *= -0.3; }
+    if (player.x > (DG.ROOM_W - 1) * T - r) { player.x = (DG.ROOM_W - 1) * T - r; player.vx *= -0.3; }
+    if (player.y < r + T) { player.y = r + T; player.vy *= -0.3; }
+    if (player.y > (DG.ROOM_H - 1) * T - r) { player.y = (DG.ROOM_H - 1) * T - r; player.vy *= -0.3; }
     // Obstacle collision
     const room = getDungeonRoom();
     if (room) for (const ob of room.obstacles) {
@@ -2686,11 +2769,10 @@ function updateDungeon() {
             player.vx *= -0.3; player.vy *= -0.3;
         }
     }
-    // Jump
-    if (keys[' '] && jumpHeight === 0) { keys[' '] = false; jumpVel = -3; }
-    if (jumpHeight < 0 || jumpVel !== 0) { jumpHeight += jumpVel; jumpVel += 0.25; if (jumpHeight >= 0) { jumpHeight = 0; jumpVel = 0; } }
 
-    // Shooting — arrow keys, ONLY when grounded (mid-air = tricks not shots)
+    updateJumpAndTricks();
+
+    // Shooting — arrows when grounded only (mid-air = tricks)
     if (DG.fireCooldown > 0) DG.fireCooldown--;
     if (jumpHeight >= -1) {
         let sx = 0, sy = 0;
@@ -2726,17 +2808,30 @@ function updateDungeon() {
         const dx = player.x - e.x, dy = player.y - e.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
 
-        if (e.type === 'chaser' || e.type === 'boss') {
+        // Fairy float animation
+        e.floatPhase = (e.floatPhase || 0) + 0.06;
+
+        if (e.type === 'pixie' || e.type === 'boss') {
+            // Pixie: floats toward player aggressively
             if (dist > 10) { e.x += (dx/dist) * e.speed; e.y += (dy/dist) * e.speed; }
-        } else if (e.type === 'shooter') {
-            if (dist > 60) { e.x += (dx/dist) * e.speed * 0.5; e.y += (dy/dist) * e.speed * 0.5; }
+        } else if (e.type === 'sprite') {
+            // Sprite: hovers at distance, fires magic wand stars
+            if (dist > 80) { e.x += (dx/dist) * e.speed * 0.4; e.y += (dy/dist) * e.speed * 0.4; }
+            else if (dist < 50) { e.x -= (dx/dist) * e.speed * 0.3; e.y -= (dy/dist) * e.speed * 0.3; }
             e.fireCooldown--;
-            if (e.fireCooldown <= 0 && dist < 120) {
-                e.fireCooldown = 90;
-                DG.projectiles.push({ x: e.x, y: e.y, dx: (dx/dist) * 2, dy: (dy/dist) * 2,
-                    damage: e.damage, range: 150, size: 4, traveled: 0, isPlayer: false });
+            e.wandAngle = Math.atan2(dy, dx); // aim wand at player
+            if (e.fireCooldown <= 0 && dist < 140) {
+                e.fireCooldown = 70;
+                // Magic star projectile
+                DG.projectiles.push({ x: e.x, y: e.y, dx: (dx/dist) * 2.5, dy: (dy/dist) * 2.5,
+                    damage: e.damage, range: 160, size: 5, traveled: 0, isPlayer: false, isMagic: true });
+                // Poof particles at wand tip
+                for (let p = 0; p < 4; p++) {
+                    DG.particles.push({ x: e.x, y: e.y, vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2 - 1,
+                        life: 20, color: ['#FFD700', '#FF69B4', '#FFFFFF'][p % 3], type: 'poof' });
+                }
             }
-        } else if (e.type === 'charger') {
+        } else if (e.type === 'imp') {
             if (e.chargeDir) {
                 e.x += e.chargeDir.x * 3; e.y += e.chargeDir.y * 3;
                 e.chargeTimer--;
@@ -2763,10 +2858,20 @@ function updateDungeon() {
             }
         }
 
-        // Enemy dies
+        // Fairy dies — big magical POOF!
         if (e.hp <= 0) {
             DG.enemies.splice(i, 1);
-            for (let k = 0; k < 8; k++) DG.particles.push({ x: e.x, y: e.y, vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3, life: 25, color: e.color });
+            // Star burst
+            for (let k = 0; k < 6; k++) {
+                const a = (k / 6) * Math.PI * 2;
+                DG.particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * 2.5, vy: Math.sin(a) * 2.5, life: 30, color: '#FFD700', type: 'star' });
+            }
+            // Poof cloud
+            for (let k = 0; k < 8; k++) {
+                DG.particles.push({ x: e.x + (Math.random()-0.5)*10, y: e.y + (Math.random()-0.5)*10,
+                    vx: (Math.random()-0.5)*1.5, vy: -Math.random()*1.5, life: 25,
+                    color: ['#FFFFFF', '#FFB0D0', '#B0FFFF', e.color][k % 4], type: 'poof' });
+            }
             continue;
         }
 
@@ -2818,7 +2923,7 @@ function updateDungeon() {
 
     // Door transitions
     if (room && room.cleared) {
-        const midX = (DG.ROOM_W / 2) * T, doorZone = T;
+        const doorZone = T + 10; // wide enough to reach past wall clamp
         if (player.y < doorZone && room.doors.up) { DG.transDir = 'up'; DG.transTimer = 15; DG.state = 'transition'; }
         if (player.y > (DG.ROOM_H - 1) * T - doorZone && room.doors.down) { DG.transDir = 'down'; DG.transTimer = 15; DG.state = 'transition'; }
         if (player.x < doorZone && room.doors.left) { DG.transDir = 'left'; DG.transTimer = 15; DG.state = 'transition'; }
@@ -2840,7 +2945,9 @@ function updateDungeon() {
 }
 
 function drawDungeon() {
-    ctx.fillStyle = '#06020F';
+    // Background changes per floor
+    const bgColors = ['#08041A', '#041520', '#180810'];
+    ctx.fillStyle = bgColors[Math.min(DG.floorNum - 1, 2)];
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
     ctx.save();
@@ -2853,36 +2960,69 @@ function drawDungeon() {
     const room = getDungeonRoom();
     if (!room) { ctx.restore(); return; }
 
-    // Floor tiles
+    // Fairy world floor colors per floor
+    const floorPalettes = [
+        { a: '#2A1045', b: '#1E0835', wall: '#6633AA', wallD: '#442288', obs: '#8844CC' }, // Floor 1: purple enchanted
+        { a: '#0A2535', b: '#061828', wall: '#2288AA', wallD: '#166688', obs: '#33AACC' }, // Floor 2: ocean crystal
+        { a: '#2A0A18', b: '#1E0610', wall: '#CC3366', wallD: '#AA2244', obs: '#DD4488' }, // Floor 3: fire realm
+    ];
+    const fp = floorPalettes[Math.min(DG.floorNum - 1, 2)];
+
+    // Floor tiles — enchanted pattern
     for (let ty = 0; ty < DG.ROOM_H; ty++) {
         for (let tx = 0; tx < DG.ROOM_W; tx++) {
             const isWall = tx === 0 || ty === 0 || tx === DG.ROOM_W - 1 || ty === DG.ROOM_H - 1;
             if (isWall) continue;
-            const color = (tx + ty) % 2 === 0 ? '#12081E' : '#0E0618';
-            drawIsoTile(tx, ty, color);
+            drawIsoTile(tx, ty, (tx + ty) % 2 === 0 ? fp.a : fp.b);
         }
     }
 
-    // Walls — raised blocks on edges (back walls only: top + left)
+    // Magic sparkles on floor (ambient)
+    ctx.globalAlpha = 0.3;
+    for (let i = 0; i < 8; i++) {
+        const sx = ((i * 73 + time * 0.3) % (DG.ROOM_W - 2)) + 1;
+        const sy = ((i * 47 + time * 0.2) % (DG.ROOM_H - 2)) + 1;
+        const sp = worldToIso(sx * T, sy * T);
+        const sparkle = Math.sin(time * 0.05 + i * 2) * 0.5 + 0.5;
+        ctx.fillStyle = i % 2 === 0 ? '#FFD700' : '#FF69B4';
+        ctx.globalAlpha = sparkle * 0.3;
+        ctx.fillRect(sp.x - 1, sp.y - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    // Glowing walls — back walls with magical glow
+    const wallGlow = 0.6 + Math.sin(time * 0.02) * 0.15;
     for (let tx = 0; tx < DG.ROOM_W; tx++) {
-        drawIsoBox(tx * T, 0, T, T * 0.3, 14, '#2A1A3A', '#1A0A2A', '#10051A');
+        drawIsoBox(tx * T, 0, T, T * 0.3, 16, fp.wall, fp.wallD, darkenColor(fp.wallD, 0.7));
     }
     for (let ty = 0; ty < DG.ROOM_H; ty++) {
-        drawIsoBox(0, ty * T, T * 0.3, T, 14, '#2A1A3A', '#1A0A2A', '#10051A');
+        drawIsoBox(0, ty * T, T * 0.3, T, 16, fp.wall, fp.wallD, darkenColor(fp.wallD, 0.7));
     }
+    // Wall glow effect
+    ctx.globalAlpha = wallGlow * 0.15;
+    const wtl = worldToIso(0, 0), wtr = worldToIso(DG.ROOM_W * T, 0);
+    ctx.fillStyle = fp.wall;
+    ctx.fillRect(wtl.x - 5, wtl.y - 20, wtr.x - wtl.x + 10, 8);
+    ctx.globalAlpha = 1;
 
-    // Obstacles
+    // Obstacles — magical crystals/mushrooms
     for (const ob of room.obstacles) {
-        drawIsoBox(ob.x * T, ob.y * T, T, T, 10, '#3A2050', '#2A1040', '#1A0830');
+        drawIsoBox(ob.x * T, ob.y * T, T, T, 12, fp.obs, darkenColor(fp.obs, 0.6), darkenColor(fp.obs, 0.4));
+        // Crystal glow on top
+        const op = worldToIso(ob.x * T + T/2, ob.y * T + T/2);
+        ctx.fillStyle = fp.obs; ctx.globalAlpha = 0.3 + Math.sin(time * 0.03 + ob.x) * 0.15;
+        ctx.beginPath(); ctx.ellipse(op.x, op.y - 14, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
     }
 
-    // Doors — glow when room cleared
-    const doorColor = room.cleared ? '#FFD700' : '#333';
+    // Doors — enchanted portals when cleared
+    const doorColor = room.cleared ? '#FFD700' : '#555';
     const midW = Math.floor(DG.ROOM_W / 2), midH = Math.floor(DG.ROOM_H / 2);
-    if (room.doors.up) { const dp = worldToIso(midW * T, 0); ctx.fillStyle = doorColor; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 8, 4, 0, 0, Math.PI * 2); ctx.fill(); }
-    if (room.doors.down) { const dp = worldToIso(midW * T, (DG.ROOM_H-1) * T); ctx.fillStyle = doorColor; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 8, 4, 0, 0, Math.PI * 2); ctx.fill(); }
-    if (room.doors.left) { const dp = worldToIso(0, midH * T); ctx.fillStyle = doorColor; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 4, 8, 0, 0, Math.PI * 2); ctx.fill(); }
-    if (room.doors.right) { const dp = worldToIso((DG.ROOM_W-1) * T, midH * T); ctx.fillStyle = doorColor; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 4, 8, 0, 0, Math.PI * 2); ctx.fill(); }
+    const doorGlow = room.cleared ? (0.4 + Math.sin(time * 0.04) * 0.2) : 0;
+    if (room.doors.up) { const dp = worldToIso(midW * T, 0); if (room.cleared) { ctx.fillStyle = `rgba(255,215,0,${doorGlow})`; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 12, 6, 0, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = doorColor; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 8, 4, 0, 0, Math.PI * 2); ctx.fill(); }
+    if (room.doors.down) { const dp = worldToIso(midW * T, (DG.ROOM_H-1) * T); if (room.cleared) { ctx.fillStyle = `rgba(255,215,0,${doorGlow})`; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 12, 6, 0, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = doorColor; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 8, 4, 0, 0, Math.PI * 2); ctx.fill(); }
+    if (room.doors.left) { const dp = worldToIso(0, midH * T); if (room.cleared) { ctx.fillStyle = `rgba(255,215,0,${doorGlow})`; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 6, 12, 0, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = doorColor; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 4, 8, 0, 0, Math.PI * 2); ctx.fill(); }
+    if (room.doors.right) { const dp = worldToIso((DG.ROOM_W-1) * T, midH * T); if (room.cleared) { ctx.fillStyle = `rgba(255,215,0,${doorGlow})`; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 6, 12, 0, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = doorColor; ctx.beginPath(); ctx.ellipse(dp.x, dp.y + 4, 4, 8, 0, 0, Math.PI * 2); ctx.fill(); }
 
     // Item glow in item rooms
     if (room.type === 'item' && !room.itemPicked) {
@@ -2909,71 +3049,117 @@ function drawDungeon() {
 
     for (const ent of allEntities) {
         if (ent.type === 'player') {
-            // Draw player (reuse studio drawPlayer which uses pIso internally)
-            // But we need to draw at dungeon coords, not studio coords
-            const pIso = worldToIso(player.x, player.y);
-            const bx = Math.round(pIso.x), by = Math.round(pIso.y + jumpHeight);
-            // Blink during iframes
             if (DG.iframes > 0 && Math.floor(DG.iframes / 4) % 2 === 0) continue;
-            // Shadow
-            ctx.fillStyle = 'rgba(0,0,0,0.2)';
-            ctx.beginPath(); ctx.ellipse(bx, Math.round(pIso.y) + 12, 7, 3, 0, 0, Math.PI * 2); ctx.fill();
-            drawCharBody(bx, by, '#996B00', C.gold, player.facing, false, 0);
-            drawCharHead(bx, by, '#DAA520', player.facing, false, 0);
-            // Halo
-            ctx.strokeStyle = C.gold; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.8;
-            ctx.beginPath(); ctx.ellipse(bx, by - 22, 6, 2, 0, 0, Math.PI * 2); ctx.stroke();
-            ctx.globalAlpha = 1;
-            // Skateboard
-            const skateSpeed = Math.sqrt((player.vx||0)**2 + (player.vy||0)**2);
-            if (skateSpeed > 0.2) {
-                ctx.save();
-                ctx.translate(bx, by + 8);
-                const wdx = player.vx || 0.01, wdy = player.vy || 0;
-                ctx.rotate(Math.atan2((wdx+wdy)*0.5, wdx-wdy));
-                ctx.fillStyle = '#8B4513'; ctx.fillRect(-6, -2, 12, 4);
-                ctx.fillStyle = C.gold; ctx.fillRect(-5, -1, 10, 2);
-                ctx.restore();
-            }
+            drawPlayer();
         } else {
-            // Draw enemy
+            // Draw fairy enemy
             const e = ent.data;
             const ep = worldToIso(e.x, e.y);
-            const ebx = Math.round(ep.x), eby = Math.round(ep.y);
-            ctx.fillStyle = 'rgba(0,0,0,0.15)';
-            ctx.beginPath(); ctx.ellipse(ebx, eby + 8, 6, 3, 0, 0, Math.PI * 2); ctx.fill();
+            const fairyFloat = Math.sin((e.floatPhase || 0)) * 3;
+            const ebx = Math.round(ep.x), eby = Math.round(ep.y + fairyFloat);
+
+            // Shadow (stays on ground)
+            ctx.fillStyle = 'rgba(0,0,0,0.12)';
+            ctx.beginPath(); ctx.ellipse(ebx, Math.round(ep.y) + 8, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
+
+            // Fairy wings (translucent, fluttering)
+            const wingFlap = Math.sin((e.floatPhase || 0) * 2) * 0.3;
+            ctx.fillStyle = e.color; ctx.globalAlpha = 0.25;
+            ctx.beginPath(); ctx.ellipse(ebx - 8, eby - 2, 6 + wingFlap, 4, -0.3, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(ebx + 8, eby - 2, 6 + wingFlap, 4, 0.3, 0, Math.PI * 2); ctx.fill();
+            // Smaller inner wings
+            ctx.globalAlpha = 0.15;
+            ctx.beginPath(); ctx.ellipse(ebx - 6, eby + 1, 4, 3, -0.5, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(ebx + 6, eby + 1, 4, 3, 0.5, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = 1;
+
+            // Body + Head
             drawCharBody(ebx, eby, darkenColor(e.color, 0.7), e.color, 'down', false, 0);
             drawCharHead(ebx, eby, e.color, 'down', false, 0);
+
+            // Magic wand (sprite type aims at player)
+            if (e.type === 'sprite' || e.type === 'boss') {
+                const wa = e.wandAngle || 0;
+                const wIso = Math.atan2((Math.cos(wa) + Math.sin(wa)) * 0.5, Math.cos(wa) - Math.sin(wa));
+                ctx.save();
+                ctx.translate(ebx + 6, eby);
+                ctx.rotate(wIso * 0.3);
+                // Wand stick
+                ctx.fillStyle = '#8B6914'; ctx.fillRect(-1, -8, 2, 8);
+                // Star on top
+                ctx.fillStyle = '#FFD700';
+                ctx.beginPath(); ctx.arc(0, -10, 3, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#FFEE88';
+                ctx.beginPath(); ctx.arc(0, -10, 1.5, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+
             // Boss crown
             if (e.type === 'boss') {
-                ctx.fillStyle = '#FF2244'; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
-                ctx.fillText('\u2666', ebx, eby - 22); ctx.textAlign = 'left';
+                ctx.fillStyle = '#FFD700'; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+                ctx.fillText('\u2605', ebx, eby - 24); ctx.textAlign = 'left';
             }
-            // HP bar for boss
-            if (e.type === 'boss') {
-                const maxHP = 20 + DG.floorNum * 10;
-                const barW = 20, barH = 2;
-                ctx.fillStyle = '#333'; ctx.fillRect(ebx - barW/2, eby - 26, barW, barH);
-                ctx.fillStyle = '#FF2244'; ctx.fillRect(ebx - barW/2, eby - 26, barW * (e.hp / maxHP), barH);
-            }
+            // HP bar for ALL enemies
+            const maxHP = e.type === 'boss' ? (20 + DG.floorNum * 10) : (2 + DG.floorNum);
+            const barW = e.type === 'boss' ? 24 : 14, barH = 2;
+            const barY = eby - (e.type === 'boss' ? 26 : 22);
+            ctx.fillStyle = '#222'; ctx.fillRect(ebx - barW/2, barY, barW, barH);
+            ctx.fillStyle = e.type === 'boss' ? '#FF2244' : e.color;
+            ctx.fillRect(ebx - barW/2, barY, barW * Math.max(0, e.hp / maxHP), barH);
+            ctx.strokeStyle = '#000'; ctx.lineWidth = 0.5; ctx.strokeRect(ebx - barW/2, barY, barW, barH);
         }
     }
 
     // Projectiles
     for (const p of DG.projectiles) {
         const pp = worldToIso(p.x, p.y);
-        ctx.fillStyle = p.isPlayer ? '#FFD700' : '#FF4444';
-        ctx.beginPath(); ctx.arc(pp.x, pp.y, p.size / 2, 0, Math.PI * 2); ctx.fill();
-        // Glow
-        ctx.fillStyle = p.isPlayer ? 'rgba(255,215,0,0.3)' : 'rgba(255,68,68,0.3)';
-        ctx.beginPath(); ctx.arc(pp.x, pp.y, p.size, 0, Math.PI * 2); ctx.fill();
+        if (p.isMagic) {
+            // Magic star projectile — spinning star with sparkle trail
+            ctx.save(); ctx.translate(pp.x, pp.y);
+            ctx.rotate(p.traveled * 0.1);
+            ctx.fillStyle = '#FFD700';
+            // 4-point star shape
+            for (let s = 0; s < 4; s++) {
+                ctx.save(); ctx.rotate(s * Math.PI / 2);
+                ctx.fillRect(-1, -4, 2, 4);
+                ctx.restore();
+            }
+            ctx.fillStyle = '#FFEE88';
+            ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+            // Sparkle trail
+            ctx.fillStyle = 'rgba(255,215,0,0.3)';
+            ctx.beginPath(); ctx.arc(pp.x, pp.y, 5, 0, Math.PI * 2); ctx.fill();
+        } else {
+            // Regular projectile (player halo shot)
+            ctx.fillStyle = p.isPlayer ? '#FFD700' : '#FF69B4';
+            ctx.beginPath(); ctx.arc(pp.x, pp.y, p.size / 2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = p.isPlayer ? 'rgba(255,215,0,0.3)' : 'rgba(255,105,180,0.3)';
+            ctx.beginPath(); ctx.arc(pp.x, pp.y, p.size, 0, Math.PI * 2); ctx.fill();
+        }
     }
 
-    // Particles
+    // Particles — poof clouds, stars, sparkles
     for (const p of DG.particles) {
         const pp = worldToIso(p.x, p.y);
-        ctx.fillStyle = p.color; ctx.globalAlpha = p.life / 25;
-        ctx.fillRect(pp.x - 1, pp.y - 1, 2, 2);
+        ctx.globalAlpha = Math.min(1, p.life / 15);
+        if (p.type === 'poof') {
+            // Expanding cloud puff
+            const size = 3 + (25 - p.life) * 0.3;
+            ctx.fillStyle = p.color;
+            ctx.beginPath(); ctx.ellipse(pp.x, pp.y, size, size * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+        } else if (p.type === 'star') {
+            // Spinning star
+            ctx.save(); ctx.translate(pp.x, pp.y);
+            ctx.rotate(p.life * 0.3);
+            ctx.fillStyle = p.color;
+            ctx.fillRect(-1, -3, 2, 6);
+            ctx.fillRect(-3, -1, 6, 2);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = p.color;
+            ctx.fillRect(pp.x - 1, pp.y - 1, 2, 2);
+        }
     }
     ctx.globalAlpha = 1;
 
