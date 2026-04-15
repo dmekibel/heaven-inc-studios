@@ -180,21 +180,25 @@ let jumpHeight = 0;
 let playerOnFurniture = false;
 
 // Trick system
-let trickState = null; // null or { name, rotation, duration, timer, landed }
+// Body spin = free rotation mid-air (left/right arrows), works with or without skateboard
+// Board flips = grab + flip (up/down arrows), needs big air from pump/ramp
+let bodySpinAngle = 0;       // current body rotation in air (degrees, resets on land)
+let boardFlipState = null;   // null or { name, rotation, duration, timer, landed }
 let trickCombo = 0;
 let trickDisplay = null;
-let pumpCharge = 0; // crouch charge for bigger ollie (0-30 frames)
+let pumpCharge = 0;
 
-const TRICKS = {
-    // Arrows mid-air: left/right = body spin, up/down = flip
+const BOARD_FLIPS = {
+    // Up/Down = kickflip/heelflip (board flip)
+    up:    { name: 'KICKFLIP', rotation: 360, duration: 12, type: 'flip' },
+    down:  { name: 'HEELFLIP', rotation: -360, duration: 12, type: 'flip' },
+    // Left/Right = board rotation (180 spin)
     left:  { name: 'BS 180', rotation: 180, duration: 10, type: 'spin' },
     right: { name: 'FS 180', rotation: -180, duration: 10, type: 'spin' },
-    up:    { name: 'FRONTFLIP', rotation: 360, duration: 14, type: 'flip' },
-    down:  { name: 'BACKFLIP', rotation: -360, duration: 14, type: 'flip' },
     // Combos
-    'up+left':  { name: 'VARIAL FLIP', rotation: 540, duration: 14, type: 'flip' },
-    'up+right': { name: 'HARDFLIP', rotation: -540, duration: 14, type: 'flip' },
-    'down+left': { name: 'INWARD HEEL', rotation: 360, duration: 14, type: 'flip' },
+    'up+left':    { name: 'VARIAL FLIP', rotation: 540, duration: 14, type: 'flip' },
+    'up+right':   { name: 'HARDFLIP', rotation: -540, duration: 14, type: 'flip' },
+    'down+left':  { name: 'INWARD HEEL', rotation: 360, duration: 14, type: 'flip' },
     'down+right': { name: 'TRE FLIP', rotation: -720, duration: 16, type: 'flip' },
 };
 let gameMode = 'studio'; // 'studio' or 'dungeon'
@@ -883,13 +887,13 @@ function update() {
     if (keys['-']) { keys['-'] = false; zoomStep(-1); }
     }
 
-    // Movement: WASD + Arrows both move (zero input when chatting — coast on momentum)
+    // Movement: WASD only (arrows are for tricks mid-air)
     let mx = 0, my = 0;
     if (!chatFocused) {
-    if (keys['w'] || keys['arrowup']) my -= 1;
-    if (keys['s'] || keys['arrowdown']) my += 1;
-    if (keys['a'] || keys['arrowleft']) mx -= 1;
-    if (keys['d'] || keys['arrowright']) mx += 1;
+    if (keys['w']) my -= 1;
+    if (keys['s']) my += 1;
+    if (keys['a']) mx -= 1;
+    if (keys['d']) mx += 1;
     }
     const mLen = Math.sqrt(mx * mx + my * my);
     if (mLen > 0) { mx /= mLen; my /= mLen; }
@@ -984,56 +988,49 @@ function update() {
         else { player.vy = 0; }
     }
 
-    // Pump/crouch — hold space while grounded to charge, release to ollie
-    if (skating && jumpHeight === 0 && keys[' '] && !chatFocused) {
-        pumpCharge = Math.min(30, pumpCharge + 1);
+    // Jump / Ollie — simple and clean
+    if (!chatFocused && keys[' '] && jumpHeight === 0) {
+        keys[' '] = false;
+        jumpVel = skating ? -3.5 : -2.5;
+        playerOnFurniture = false;
+        boardFlipState = null;
+        bodySpinAngle = 0;
     }
-    // Jump / Ollie — charged by pump
-    if (!chatFocused && jumpHeight === 0) {
-        if (skating && !keys[' '] && pumpCharge > 3) {
-            // Release charged ollie
-            const charge = pumpCharge / 30; // 0-1
-            jumpVel = -2.5 - charge * 2.5; // -2.5 to -5.0
-            playerOnFurniture = false;
-            trickState = null;
-            pumpCharge = 0;
-        } else if (keys[' '] && !skating) {
-            keys[' '] = false;
-            jumpVel = -2.5;
-            playerOnFurniture = false;
-            trickState = null;
-        }
-    }
-    if (!keys[' ']) pumpCharge = 0;
 
-    // Trick input — ARROWS mid-air (WASD stays movement)
-    if (skating && jumpHeight < -3 && !trickState) {
-        let trickKey = '';
-        const tu = keys['arrowup'];
-        const td = keys['arrowdown'];
-        const tl = keys['arrowleft'];
-        const tr = keys['arrowright'];
-        if (tu && tl) trickKey = 'up+left';
-        else if (tu && tr) trickKey = 'up+right';
-        else if (td && tl) trickKey = 'down+left';
-        else if (td && tr) trickKey = 'down+right';
-        else if (tu) trickKey = 'up';
-        else if (td) trickKey = 'down';
-        else if (tl) trickKey = 'left';
-        else if (tr) trickKey = 'right';
-        if (trickKey && TRICKS[trickKey]) {
-            const t = TRICKS[trickKey];
-            trickState = { name: t.name, rotation: t.rotation, duration: t.duration, timer: 0, landed: false };
+    // === TRICKS (only mid-air) ===
+    if (jumpHeight < -3) {
+        // Body spin: A/D mid-air when walking (not skating)
+        if (!skating) {
+            if (keys['a']) bodySpinAngle += 8;
+            if (keys['d']) bodySpinAngle -= 8;
+        }
+        // Board tricks: arrows mid-air when skating
+        if (skating && !boardFlipState) {
+            const tu = keys['arrowup'];
+            const td = keys['arrowdown'];
+            const tl = keys['arrowleft'];
+            const tr = keys['arrowright'];
+            let flipKey = '';
+            if (tu && tl) flipKey = 'up+left';
+            else if (tu && tr) flipKey = 'up+right';
+            else if (td && tl) flipKey = 'down+left';
+            else if (td && tr) flipKey = 'down+right';
+            else if (tu) flipKey = 'up';
+            else if (td) flipKey = 'down';
+            else if (tl) flipKey = 'left';
+            else if (tr) flipKey = 'right';
+            if (flipKey && BOARD_FLIPS[flipKey]) {
+                const f = BOARD_FLIPS[flipKey];
+                boardFlipState = { name: f.name, rotation: f.rotation, duration: f.duration, timer: 0, landed: false, type: f.type };
+            }
         }
     }
-    // Update trick animation
-    if (trickState) {
-        trickState.timer++;
-        if (trickState.timer >= trickState.duration) {
-            trickState.landed = true; // trick completed in air
-        }
+    if (boardFlipState) {
+        boardFlipState.timer++;
+        if (boardFlipState.timer >= boardFlipState.duration) boardFlipState.landed = true;
     }
-    // Auto-jump when moving off elevated edge (skating = bigger launch)
+
+    // Auto-jump when moving off elevated edge
     if (jumpHeight === 0 && jumpVel === 0 && !playerOnFurniture) {
         const prevH = getHeightAt(player.x - (player.vx || 0), player.y - (player.vy || 0));
         const currH = getHeightAt(player.x, player.y);
@@ -1057,18 +1054,27 @@ function update() {
         } else if (jumpHeight >= 0) {
             jumpHeight = 0; jumpVel = 0;
             playerOnFurniture = false;
-            // Land trick
-            if (trickState && trickState.landed) {
+            // Land — simple trick scoring
+            if (boardFlipState) {
+                if (boardFlipState.landed) {
+                    trickCombo++;
+                    const combo = trickCombo > 1 ? ` x${trickCombo}` : '';
+                    trickDisplay = { text: boardFlipState.name + combo, timer: 60 };
+                } else {
+                    trickDisplay = { text: 'BAIL!', timer: 40 };
+                    trickCombo = 0;
+                }
+            } else if (Math.abs(bodySpinAngle) >= 150) {
+                const dir = bodySpinAngle > 0 ? 'BS' : 'FS';
+                const deg = Math.round(Math.abs(bodySpinAngle) / 180) * 180;
                 trickCombo++;
-                const comboText = trickCombo > 1 ? ` x${trickCombo}` : '';
-                trickDisplay = { text: trickState.name + comboText, timer: 60 };
-            } else if (trickState && !trickState.landed) {
-                trickDisplay = { text: 'BAIL!', timer: 40 };
-                trickCombo = 0;
+                const combo = trickCombo > 1 ? ` x${trickCombo}` : '';
+                trickDisplay = { text: `${dir} ${deg}${combo}`, timer: 60 };
             } else {
-                if (trickCombo > 0 && !trickState) trickCombo = 0;
+                trickCombo = 0;
             }
-            trickState = null;
+            bodySpinAngle = 0;
+            boardFlipState = null;
         }
     }
     // Fall off furniture edge
@@ -2209,8 +2215,8 @@ function drawPlayer() {
     }
     ctx.globalAlpha = 1;
 
-    // Skateboard — with trick animation
-    if (skating && (player.skateAngle !== null || trickState) && (skateSpeed > 0.2 || trickState)) {
+    // Skateboard — with body spin + board flip animation
+    if (skating && (player.skateAngle !== null || boardFlipState) && (skateSpeed > 0.2 || boardFlipState || jumpHeight < -2)) {
         ctx.save();
         ctx.translate(bx, by + 10);
         // Base board angle
@@ -2218,16 +2224,19 @@ function drawPlayer() {
         const wdy = Math.sin(player.skateAngle || 0);
         let isoAngle = Math.atan2((wdx + wdy) * 0.5, wdx - wdy);
 
-        // Trick rotation — flip the board during trick
-        let trickFlipScale = 1; // 1 = normal, 0 = edge-on, -1 = flipped
-        if (trickState) {
-            const progress = Math.min(1, trickState.timer / trickState.duration);
-            const trickAngle = (trickState.rotation * Math.PI / 180) * progress;
-            if (trickState.name.includes('FLIP') || trickState.name.includes('HEEL') || trickState.name.includes('TRE')) {
-                // Flip tricks — board spins on its axis (scale Y to simulate flip)
+        // Body spin affects board angle too
+        if (jumpHeight < -2) isoAngle += bodySpinAngle * Math.PI / 180;
+
+        // Board trick visual
+        let trickFlipScale = 1;
+        if (boardFlipState) {
+            const progress = Math.min(1, boardFlipState.timer / boardFlipState.duration);
+            const trickAngle = (boardFlipState.rotation * Math.PI / 180) * progress;
+            if (boardFlipState.type === 'flip') {
+                // Kickflip/heelflip — board flips on its axis
                 trickFlipScale = Math.cos(trickAngle);
             } else {
-                // 180/body rotation — rotate the board angle
+                // 180 spin — rotate the board angle
                 isoAngle += trickAngle;
             }
         }
@@ -2252,7 +2261,7 @@ function drawPlayer() {
         ctx.restore();
     }
 
-    // Trick name display
+    // Trick name display (floats up on land)
     if (trickDisplay) {
         trickDisplay.timer--;
         if (trickDisplay.timer <= 0) trickDisplay = null;
@@ -2261,10 +2270,19 @@ function drawPlayer() {
             ctx.globalAlpha = ta;
             const isBail = trickDisplay.text === 'BAIL!';
             ctx.fillStyle = isBail ? '#FF3344' : '#FFD700';
-            ctx.font = `bold ${isBail ? 7 : 8}px monospace`; ctx.textAlign = 'center';
-            ctx.fillText(trickDisplay.text, bx, by - 35 - (60 - trickDisplay.timer) * 0.3);
+            ctx.font = `bold ${isBail ? 7 : 9}px monospace`; ctx.textAlign = 'center';
+            ctx.fillText(trickDisplay.text, bx, by - 35 - (70 - trickDisplay.timer) * 0.4);
             ctx.textAlign = 'left'; ctx.globalAlpha = 1;
         }
+    }
+
+    // Show current spin angle while airborne
+    if (jumpHeight < -2 && Math.abs(bodySpinAngle) > 30) {
+        const dir = bodySpinAngle > 0 ? 'BS' : 'FS';
+        const deg = Math.round(Math.abs(bodySpinAngle) / 45) * 45;
+        ctx.fillStyle = 'rgba(255,215,0,0.5)'; ctx.font = '6px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(`${dir} ${deg}°`, bx, by - 32);
+        ctx.textAlign = 'left';
     }
 
     // Label
@@ -2672,18 +2690,20 @@ function updateDungeon() {
     if (keys[' '] && jumpHeight === 0) { keys[' '] = false; jumpVel = -3; }
     if (jumpHeight < 0 || jumpVel !== 0) { jumpHeight += jumpVel; jumpVel += 0.25; if (jumpHeight >= 0) { jumpHeight = 0; jumpVel = 0; } }
 
-    // Shooting — arrow keys
-    let sx = 0, sy = 0;
-    if (keys['arrowup']) sy = -1;
-    if (keys['arrowdown']) sy = 1;
-    if (keys['arrowleft']) sx = -1;
-    if (keys['arrowright']) sx = 1;
+    // Shooting — arrow keys, ONLY when grounded (mid-air = tricks not shots)
     if (DG.fireCooldown > 0) DG.fireCooldown--;
-    if ((sx || sy) && DG.fireCooldown <= 0) {
-        const slen = Math.sqrt(sx*sx+sy*sy); sx/=slen; sy/=slen;
-        DG.projectiles.push({ x: player.x, y: player.y, dx: sx * DG.playerShotSpeed, dy: sy * DG.playerShotSpeed,
-            damage: DG.playerDmg, range: DG.playerShotRange, size: DG.playerShotSize, traveled: 0, isPlayer: true });
-        DG.fireCooldown = DG.playerFireRate;
+    if (jumpHeight >= -1) {
+        let sx = 0, sy = 0;
+        if (keys['arrowup']) sy = -1;
+        if (keys['arrowdown']) sy = 1;
+        if (keys['arrowleft']) sx = -1;
+        if (keys['arrowright']) sx = 1;
+        if ((sx || sy) && DG.fireCooldown <= 0) {
+            const slen = Math.sqrt(sx*sx+sy*sy); sx/=slen; sy/=slen;
+            DG.projectiles.push({ x: player.x, y: player.y, dx: sx * DG.playerShotSpeed, dy: sy * DG.playerShotSpeed,
+                damage: DG.playerDmg, range: DG.playerShotRange, size: DG.playerShotSize, traveled: 0, isPlayer: true });
+            DG.fireCooldown = DG.playerFireRate;
+        }
     }
 
     // Camera follow
