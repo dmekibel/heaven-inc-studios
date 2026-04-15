@@ -656,8 +656,20 @@ function init() {
     canvas.height = CANVAS_H;
     ctx.imageSmoothingEnabled = false;
     resize();
+    // iOS Safari reports stale innerWidth/innerHeight right after rotation,
+    // and the URL bar collapses/expands producing multiple layout changes.
+    // Fire a staircase of resizes so the final state is correct.
+    const kickResize = () => {
+        window.scrollTo(0, 0);
+        resize();
+        [60, 180, 400, 800].forEach(ms => setTimeout(() => { window.scrollTo(0, 0); resize(); }, ms));
+    };
     window.addEventListener('resize', resize);
-    window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+    window.addEventListener('orientationchange', kickResize);
+    // visualViewport is the most reliable on iOS — fires on URL bar changes too
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', resize);
+    }
     window.addEventListener('keydown', e => {
         if (chatFocused) return; // let chat input handle its own keys
         keys[e.key.toLowerCase()] = true;
@@ -842,8 +854,11 @@ function init() {
 
 function resize() {
     IS_TOUCH = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    // Prefer visualViewport on touch — it reports the real painted size
+    // (accounts for URL bar, reliable across rotation). Fallback to innerW/H.
+    const vv = window.visualViewport;
+    const vw = (IS_TOUCH && vv) ? Math.round(vv.width)  : window.innerWidth;
+    const vh = (IS_TOUCH && vv) ? Math.round(vv.height) : window.innerHeight;
 
     if (IS_TOUCH) {
         // Full-screen canvas on mobile. Keep internal height pegged to BASE_H for consistent physics,
