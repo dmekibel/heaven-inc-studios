@@ -655,6 +655,16 @@ function init() {
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
     ctx.imageSmoothingEnabled = false;
+    // Force-show mobile controls on touch devices (JS-driven instead of CSS-only
+    // so it can't miss due to media-query edge cases like external keyboards)
+    if (IS_TOUCH) {
+        const mc = document.getElementById('mobile-controls');
+        if (mc) mc.style.display = 'block';
+        for (const id of ['mobile-esc', 'mobile-zoom-in', 'mobile-zoom-out']) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'block';
+        }
+    }
     resize();
     // iOS Safari reports stale innerWidth/innerHeight right after rotation,
     // and the URL bar collapses/expands producing multiple layout changes.
@@ -686,10 +696,17 @@ function init() {
     canvas.addEventListener('wheel', handleWheel, { passive: false });
 
     // Mobile twin-stick controls
-    // Left stick: movement + TAP to toggle skateboard
+    // Left stick: movement (screen-oriented — stick up = up on screen).
+    // Apply inverse-iso so screen direction maps to world WASD, matching the
+    // mental model of "push stick where you want the character to go on screen".
     setupMobileStick('stick-left', 'knob-left', (dx, dy) => {
-        keys['w'] = dy < -0.3; keys['s'] = dy > 0.3;
-        keys['a'] = dx < -0.3; keys['d'] = dx > 0.3;
+        // dx, dy are screen-space unit vector components from the stick
+        const wx = dx + dy;  // world-x from inverse-iso (direction, magnitude irrelevant)
+        const wy = dy - dx;  // world-y from inverse-iso
+        const wlen = Math.sqrt(wx * wx + wy * wy) || 1;
+        const nx = wx / wlen, ny = wy / wlen;
+        keys['w'] = ny < -0.3; keys['s'] = ny > 0.3;
+        keys['a'] = nx < -0.3; keys['d'] = nx > 0.3;
     });
     const stickLeft = document.getElementById('stick-left');
     if (stickLeft) {
@@ -741,8 +758,17 @@ function init() {
         zoomOutBtn.addEventListener('touchstart', zout, { passive: false });
         zoomOutBtn.addEventListener('click', zout);
     }
-    // Unlock iOS audio on any canvas touch
-    canvas.addEventListener('touchstart', () => { initAudio(); if (!musicPlaying) startMusic(); }, { once: true });
+    // Unlock iOS audio on any canvas touch; also serve as "tap to start" on title screen
+    canvas.addEventListener('touchstart', () => {
+        initAudio();
+        if (!musicPlaying) startMusic();
+        if (gameMode === 'title') keys['__tap_start__'] = true;
+    }, { passive: true });
+    canvas.addEventListener('click', () => {
+        initAudio();
+        if (!musicPlaying) startMusic();
+        if (gameMode === 'title') keys['__tap_start__'] = true;
+    });
 
     document.getElementById('dialogue-close').addEventListener('click', closeDialogue);
     document.getElementById('card-close').addEventListener('click', () => {
@@ -911,17 +937,18 @@ function resize() {
     }
 }
 
-// Zoom steps. On desktop we use the original raw multipliers people are used
-// to; on touch we use target world-widths because the canvas aspect varies
-// wildly with orientation. Tuned so portrait "closest" feels close without
-// being the previous cramped 75px-wide view.
+// Zoom steps. Desktop keeps original raw multipliers. Touch targets the
+// SHORTER canvas dimension (width in portrait, height in landscape) so the
+// close view feels equally close in both orientations.
 const DESKTOP_ZOOMS = [0.6, 1.2, 2.5];
-const TOUCH_TARGET_WIDTHS = [600, 380, 260]; // far → mid → close (world px visible)
+// far → mid → close, measured in world-pixels across the shorter canvas edge
+const TOUCH_SHORT_TARGETS = [380, 220, 130];
 let zoomIndex = 1; // start at middle
 
 function currentZoomLevels() {
     if (IS_TOUCH) {
-        return TOUCH_TARGET_WIDTHS.map(w => CANVAS_W / w);
+        const shortDim = Math.min(CANVAS_W, CANVAS_H);
+        return TOUCH_SHORT_TARGETS.map(t => shortDim / t);
     }
     return DESKTOP_ZOOMS;
 }
@@ -1335,14 +1362,15 @@ function drawTitle() {
     const glow = 0.7 + Math.sin(time * 0.03) * 0.15;
     ctx.shadowColor = '#FF88CC'; ctx.shadowBlur = 25 * glow;
 
-    // Title
+    // Title — scale font by narrow canvas to avoid clipping on portrait
+    const fitScale = Math.min(1, CANVAS_W / 360);  // shrink if canvas is narrower than 360
     const titleY = CANVAS_H * 0.28 + Math.sin(time * 0.02) * 3;
     ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center';
+    ctx.font = `bold ${Math.round(28 * fitScale)}px monospace`; ctx.textAlign = 'center';
     ctx.fillText('HEAVEN INC.', CANVAS_W / 2, titleY);
-    ctx.font = 'bold 12px monospace';
+    ctx.font = `bold ${Math.round(12 * fitScale)}px monospace`;
     ctx.fillStyle = '#CC88DD';
-    ctx.fillText('S T U D I O S', CANVAS_W / 2, titleY + 22);
+    ctx.fillText('S T U D I O S', CANVAS_W / 2, titleY + Math.round(22 * fitScale));
     ctx.shadowBlur = 0;
 
     // Character preview — CEO on skateboard
@@ -1358,18 +1386,23 @@ function drawTitle() {
     ctx.fillStyle = '#8B4513'; ctx.fillRect(cx - 7, cy + bob + 8, 14, 4);
     ctx.fillStyle = C.gold; ctx.fillRect(cx - 6, cy + bob + 9, 12, 2);
 
-    // Prompt
+    // Prompt (device-aware)
     const flash = Math.sin(time * 0.06) > 0;
     if (flash) {
         ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 10px monospace';
-        ctx.fillText('PRESS SPACE TO START', CANVAS_W / 2, CANVAS_H * 0.75);
+        ctx.font = `bold ${Math.round(12 * fitScale)}px monospace`;
+        ctx.fillText(IS_TOUCH ? 'TAP TO START' : 'PRESS SPACE TO START', CANVAS_W / 2, CANVAS_H * 0.75);
     }
 
-    // Credits
-    ctx.fillStyle = '#555'; ctx.font = '7px monospace';
-    ctx.fillText('WASD: Move  |  SHIFT: Skateboard  |  SPACE: Jump  |  ARROWS: Tricks', CANVAS_W / 2, CANVAS_H * 0.88);
-    ctx.fillText('ENTER: Chat  |  E: Interact', CANVAS_W / 2, CANVAS_H * 0.92);
+    // Credits (device-aware help, scaled to fit narrow canvases)
+    ctx.fillStyle = '#555'; ctx.font = `${Math.round(8 * fitScale)}px monospace`;
+    if (IS_TOUCH) {
+        ctx.fillText('LEFT STICK: Move  |  TAP LEFT: Skate', CANVAS_W / 2, CANVAS_H * 0.88);
+        ctx.fillText('RIGHT STICK: Aim  |  TAP RIGHT: Jump', CANVAS_W / 2, CANVAS_H * 0.92);
+    } else {
+        ctx.fillText('WASD: Move  |  SHIFT: Skateboard  |  SPACE: Jump  |  ARROWS: Tricks', CANVAS_W / 2, CANVAS_H * 0.88);
+        ctx.fillText('ENTER: Chat  |  E: Interact', CANVAS_W / 2, CANVAS_H * 0.92);
+    }
     ctx.textAlign = 'left';
 
     // Vignette
@@ -1386,8 +1419,9 @@ function loop() { requestAnimationFrame(loop); update(); draw(); }
 function update() {
     time++;
     if (gameMode === 'title') {
-        if (keys[' '] || keys['enter']) {
-            keys[' '] = false; keys['enter'] = false;
+        // Space/Enter on desktop, tap-anywhere on touch
+        if (keys[' '] || keys['enter'] || keys['__tap_start__']) {
+            keys[' '] = false; keys['enter'] = false; keys['__tap_start__'] = false;
             initAudio(); startMusic(); SFX.menuSelect();
             gameMode = 'studio';
         }
