@@ -820,18 +820,25 @@ function resize() {
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
     const isTouch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
-    // On touch, reserve 40vh at the bottom for twin-stick controls
-    const availW = window.innerWidth;
-    const availH = isTouch ? window.innerHeight * 0.6 : window.innerHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // On touch, reserve bottom band for twin-stick controls
+    const reserveBottom = isTouch ? Math.floor(vh * 0.4) : 0;
+    const availW = vw;
+    const availH = vh - reserveBottom;
     const scale = Math.min(availW / CANVAS_W, availH / CANVAS_H);
     const w = Math.floor(CANVAS_W * scale);
     const h = Math.floor(CANVAS_H * scale);
+    // Use position:fixed so containing block is ALWAYS the viewport (immune to any parent layout)
+    canvas.style.position = 'fixed';
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
-    canvas.style.position = 'absolute';
-    canvas.style.transform = 'none';
-    canvas.style.left = Math.floor((window.innerWidth - w) / 2) + 'px';
+    canvas.style.left = Math.floor((vw - w) / 2) + 'px';
     canvas.style.top = Math.floor((availH - h) / 2) + 'px';
+    canvas.style.right = 'auto';
+    canvas.style.bottom = 'auto';
+    canvas.style.margin = '0';
+    canvas.style.transform = 'none';
     ctx.imageSmoothingEnabled = false;
 }
 
