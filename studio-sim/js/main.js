@@ -698,11 +698,12 @@ function init() {
         interactBtn.addEventListener('touchstart', e => { e.preventDefault(); keys['e'] = true; initAudio(); });
         interactBtn.addEventListener('touchend', e => { e.preventDefault(); keys['e'] = false; });
     }
-    // ESC button (exit dungeon)
+    // ESC button (exit dungeon / close dialogue) — top-left X corner
     const escBtn = document.getElementById('mobile-esc');
     if (escBtn) {
-        escBtn.addEventListener('touchstart', e => { e.preventDefault(); keys['escape'] = true; });
-        escBtn.addEventListener('touchend', e => { e.preventDefault(); keys['escape'] = false; });
+        const pressEsc = () => { keys['escape'] = true; setTimeout(() => { keys['escape'] = false; }, 120); };
+        escBtn.addEventListener('touchstart', e => { e.preventDefault(); pressEsc(); });
+        escBtn.addEventListener('click', e => { e.preventDefault(); pressEsc(); });
     }
     // Unlock iOS audio on any canvas touch
     canvas.addEventListener('touchstart', () => { initAudio(); if (!musicPlaying) startMusic(); }, { once: true });
@@ -818,12 +819,19 @@ function init() {
 function resize() {
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
-    const scale = Math.min(window.innerWidth / CANVAS_W, window.innerHeight / CANVAS_H);
-    canvas.style.width = Math.floor(CANVAS_W * scale) + 'px';
-    canvas.style.height = Math.floor(CANVAS_H * scale) + 'px';
+    const isTouch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+    // On touch, reserve 40vh at the bottom for twin-stick controls
+    const availW = window.innerWidth;
+    const availH = isTouch ? window.innerHeight * 0.6 : window.innerHeight;
+    const scale = Math.min(availW / CANVAS_W, availH / CANVAS_H);
+    const w = Math.floor(CANVAS_W * scale);
+    const h = Math.floor(CANVAS_H * scale);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
     canvas.style.position = 'absolute';
-    canvas.style.left = Math.floor((window.innerWidth - CANVAS_W * scale) / 2) + 'px';
-    canvas.style.top = Math.floor((window.innerHeight - CANVAS_H * scale) / 2) + 'px';
+    canvas.style.transform = 'none';
+    canvas.style.left = Math.floor((window.innerWidth - w) / 2) + 'px';
+    canvas.style.top = Math.floor((availH - h) / 2) + 'px';
     ctx.imageSmoothingEnabled = false;
 }
 

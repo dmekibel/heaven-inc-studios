@@ -12,18 +12,7 @@ html, body {
     display: block;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    position: absolute;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-}
-
-/* Landscape: fill width */
-@media (orientation: landscape) {
-    #sim { width: 100vw; height: auto; max-height: 100vh; }
-}
-/* Portrait: center vertically, fill width */
-@media (orientation: portrait) {
-    #sim { width: 100vw; height: auto; max-height: 50vh; top: 25vh; transform: translateX(-50%); }
+    /* Position/size handled by JS resize() — do not override here */
 }
 
 #hud {
@@ -33,7 +22,7 @@ html, body {
     pointer-events: none;
 }
 @media (hover: none) and (pointer: coarse) {
-    #hud { font-size: 10px; }
+    #hud { font-size: 10px; left: 56px; } /* clear space for top-left ESC X */
     #hud-title { font-size: 11px !important; letter-spacing: 2px !important; }
 }
 
@@ -299,7 +288,7 @@ html, body {
     transition: none;
 }
 
-#mobile-interact, #mobile-esc {
+#mobile-interact {
     position: absolute;
     pointer-events: auto;
     background: rgba(255, 215, 0, 0.15);
@@ -309,12 +298,38 @@ html, body {
     font-family: 'Courier New', monospace;
     font-weight: bold;
     font-size: 14px;
-    width: 44px; height: 44px;
+    width: 52px; height: 52px;
     touch-action: none;
+    right: 170px;
+    bottom: 70px;
+    z-index: 55;
 }
 
-#mobile-interact { right: 160px; bottom: 60px; }
-#mobile-esc { left: 50%; transform: translateX(-50%); bottom: 60px; font-size: 10px; background: rgba(255,100,100,0.15); border-color: rgba(255,100,100,0.3); color: #FF8888; }
+/* ESC lives outside #mobile-controls so it shows on desktop too (as corner X) */
+#mobile-esc {
+    position: fixed;
+    top: 10px; left: 10px;
+    width: 36px; height: 36px;
+    background: rgba(0,0,0,0.55);
+    border: 2px solid rgba(255,100,100,0.55);
+    border-radius: 50%;
+    color: #FF8888;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    font-size: 18px;
+    line-height: 32px;
+    text-align: center;
+    padding: 0;
+    cursor: pointer;
+    z-index: 60;
+    touch-action: manipulation;
+    display: none; /* shown on touch via media query below */
+}
+#mobile-esc:hover, #mobile-esc:active {
+    background: rgba(0,0,0,0.75);
+    border-color: #FF8888;
+    color: #FFAAAA;
+}
 
 .stick-label {
     text-align: center;
@@ -327,5 +342,6 @@ html, body {
 
 @media (hover: none) and (pointer: coarse) {
     #mobile-controls { display: block; }
+    #mobile-esc { display: block; }
     #chat-bar { bottom: 42vh; }
 }
