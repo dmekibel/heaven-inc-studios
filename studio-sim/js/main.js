@@ -1,11 +1,16 @@
 // Heaven Inc. Studios — Connected World with Camera & Zoom
 // One big map. All rooms visible. Zoom in/out. No teleporting.
 
-const CANVAS_W = 720;
-const CANVAS_H = 405;
+// Baseline canvas dimensions (desktop default). These are LIVE values — resize() updates them to match
+// the viewport aspect ratio on touch devices so the game truly fills the screen (tall in portrait,
+// extra-wide in landscape). The camera centers on CANVAS_W/2, CANVAS_H/2 automatically.
+const BASE_W = 720;
+const BASE_H = 405;
+let CANVAS_W = BASE_W;
+let CANVAS_H = BASE_H;
 const T = 24; // tile size in world pixels
 
-// Touch device detection — affects shoot-direction mapping (screen vs world)
+// Touch device detection — affects shoot-direction mapping (screen vs world) and canvas sizing
 let IS_TOUCH = (typeof window !== 'undefined' && window.matchMedia)
     ? window.matchMedia('(hover: none) and (pointer: coarse)').matches
     : false;
@@ -652,6 +657,7 @@ function init() {
     ctx.imageSmoothingEnabled = false;
     resize();
     window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', () => setTimeout(resize, 200));
     window.addEventListener('keydown', e => {
         if (chatFocused) return; // let chat input handle its own keys
         keys[e.key.toLowerCase()] = true;
@@ -709,6 +715,19 @@ function init() {
         const pressEsc = () => { keys['escape'] = true; setTimeout(() => { keys['escape'] = false; }, 120); };
         escBtn.addEventListener('touchstart', e => { e.preventDefault(); pressEsc(); });
         escBtn.addEventListener('click', e => { e.preventDefault(); pressEsc(); });
+    }
+    // Mobile zoom buttons (tap-based, intentionally no pinch gesture so browser zoom isn't hijacked)
+    const zoomInBtn = document.getElementById('mobile-zoom-in');
+    const zoomOutBtn = document.getElementById('mobile-zoom-out');
+    if (zoomInBtn) {
+        const zin = e => { e.preventDefault(); zoomStep(1); };
+        zoomInBtn.addEventListener('touchstart', zin, { passive: false });
+        zoomInBtn.addEventListener('click', zin);
+    }
+    if (zoomOutBtn) {
+        const zout = e => { e.preventDefault(); zoomStep(-1); };
+        zoomOutBtn.addEventListener('touchstart', zout, { passive: false });
+        zoomOutBtn.addEventListener('click', zout);
     }
     // Unlock iOS audio on any canvas touch
     canvas.addEventListener('touchstart', () => { initAudio(); if (!musicPlaying) startMusic(); }, { once: true });
@@ -822,29 +841,47 @@ function init() {
 }
 
 function resize() {
-    canvas.width = CANVAS_W;
-    canvas.height = CANVAS_H;
     IS_TOUCH = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
-    const isTouch = IS_TOUCH;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    // On touch, reserve bottom band for twin-stick controls
-    const reserveBottom = isTouch ? Math.floor(vh * 0.4) : 0;
-    const availW = vw;
-    const availH = vh - reserveBottom;
-    const scale = Math.min(availW / CANVAS_W, availH / CANVAS_H);
-    const w = Math.floor(CANVAS_W * scale);
-    const h = Math.floor(CANVAS_H * scale);
-    // Use position:fixed so containing block is ALWAYS the viewport (immune to any parent layout)
-    canvas.style.position = 'fixed';
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    canvas.style.left = Math.floor((vw - w) / 2) + 'px';
-    canvas.style.top = Math.floor((availH - h) / 2) + 'px';
-    canvas.style.right = 'auto';
-    canvas.style.bottom = 'auto';
-    canvas.style.margin = '0';
-    canvas.style.transform = 'none';
+
+    if (IS_TOUCH) {
+        // Full-screen canvas on mobile. Keep internal height pegged to BASE_H for consistent physics,
+        // but let width match viewport aspect ratio so portrait is tall and landscape is wide.
+        const aspect = vw / vh;
+        CANVAS_H = BASE_H;
+        CANVAS_W = Math.round(CANVAS_H * aspect);
+        // Canvas fills the whole viewport
+        canvas.width = CANVAS_W;
+        canvas.height = CANVAS_H;
+        canvas.style.position = 'fixed';
+        canvas.style.left = '0';
+        canvas.style.top = '0';
+        canvas.style.right = '0';
+        canvas.style.bottom = '0';
+        canvas.style.width = vw + 'px';
+        canvas.style.height = vh + 'px';
+        canvas.style.margin = '0';
+        canvas.style.transform = 'none';
+    } else {
+        // Desktop: locked baseline, letterboxed and centered
+        CANVAS_W = BASE_W;
+        CANVAS_H = BASE_H;
+        canvas.width = CANVAS_W;
+        canvas.height = CANVAS_H;
+        const scale = Math.min(vw / CANVAS_W, vh / CANVAS_H);
+        const w = Math.floor(CANVAS_W * scale);
+        const h = Math.floor(CANVAS_H * scale);
+        canvas.style.position = 'fixed';
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        canvas.style.left = Math.floor((vw - w) / 2) + 'px';
+        canvas.style.top = Math.floor((vh - h) / 2) + 'px';
+        canvas.style.right = 'auto';
+        canvas.style.bottom = 'auto';
+        canvas.style.margin = '0';
+        canvas.style.transform = 'none';
+    }
     ctx.imageSmoothingEnabled = false;
 }
 
@@ -857,38 +894,58 @@ function zoomStep(dir) {
 }
 
 let zoomCooldown = 0;
+// Floating thumbstick: the zone is a large invisible area covering half the screen.
+// On touchstart, we anchor the visible stick base at the touch point. The knob follows
+// the finger (capped to maxDist from the anchor). On release the base fades out.
 function setupMobileStick(zoneId, knobId, callback) {
     const zone = document.getElementById(zoneId);
     const knob = document.getElementById(knobId);
     if (!zone || !knob) return;
+    const base = zone.querySelector('.stick-base');
+    const BASE_SIZE = 120; // matches CSS width/height
+    const maxDist = 44;
     let touchId = null, cx = 0, cy = 0;
+
     zone.addEventListener('touchstart', e => {
         e.preventDefault();
         const t = e.changedTouches[0];
         touchId = t.identifier;
-        const rect = zone.getBoundingClientRect();
-        cx = rect.left + rect.width / 2;
-        cy = rect.top + rect.height / 2;
-    });
+        // Anchor the stick base at the touch point, relative to the zone
+        const zoneRect = zone.getBoundingClientRect();
+        const localX = t.clientX - zoneRect.left;
+        const localY = t.clientY - zoneRect.top;
+        if (base) {
+            base.style.left = (localX - BASE_SIZE / 2) + 'px';
+            base.style.top  = (localY - BASE_SIZE / 2) + 'px';
+            base.style.right = 'auto';
+            base.style.bottom = 'auto';
+            base.classList.add('active');
+        }
+        cx = t.clientX;
+        cy = t.clientY;
+        knob.style.transform = 'translate(-50%, -50%)';
+    }, { passive: false });
+
     zone.addEventListener('touchmove', e => {
         e.preventDefault();
         for (const t of e.changedTouches) {
             if (t.identifier !== touchId) continue;
             const dx = t.clientX - cx, dy = t.clientY - cy;
             const dist = Math.sqrt(dx * dx + dy * dy);
-            const maxDist = 40;
             const clamp = Math.min(dist, maxDist);
             const nx = dist > 0 ? (dx / dist) * clamp : 0;
             const ny = dist > 0 ? (dy / dist) * clamp : 0;
             knob.style.transform = `translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
             callback(dist > 8 ? dx / dist : 0, dist > 8 ? dy / dist : 0);
         }
-    });
+    }, { passive: false });
+
     const end = e => {
         for (const t of e.changedTouches) {
             if (t.identifier !== touchId) continue;
             touchId = null;
             knob.style.transform = 'translate(-50%, -50%)';
+            if (base) base.classList.remove('active');
             callback(0, 0);
         }
     };
