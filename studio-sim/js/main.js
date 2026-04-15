@@ -900,21 +900,30 @@ function resize() {
     ctx.imageSmoothingEnabled = false;
     // Re-apply zoom so the current step shows the intended world-width
     // (CANVAS_W just changed — zoom multiplier must re-derive from it).
+    // Snap camera.zoom as well so boot/rotation doesn't show a frame at
+    // the pre-lerp zoom (which was causing the "opens in zoomed in" bug
+    // on portrait — default zoom 1.0 is very tight on a 187px canvas).
     if (typeof camera !== 'undefined' && camera) {
         const levels = currentZoomLevels();
-        camera.targetZoom = levels[Math.max(0, Math.min(levels.length - 1, zoomIndex))];
+        const z = levels[Math.max(0, Math.min(levels.length - 1, zoomIndex))];
+        camera.targetZoom = z;
+        camera.zoom = z;
     }
 }
 
-// Zoom steps defined by the target WORLD-PIXEL WIDTH visible on screen.
-// far → mid → close. Larger number = see more of the world (zoomed out).
-// This keeps "closest" sensible across very different canvas widths
-// (narrow portrait phone vs wide desktop letterbox).
-const ZOOM_TARGET_WORLD_WIDTHS = [1200, 720, 480];
-let zoomIndex = 1; // start at 720 world-pixels visible
+// Zoom steps. On desktop we use the original raw multipliers people are used
+// to; on touch we use target world-widths because the canvas aspect varies
+// wildly with orientation. Tuned so portrait "closest" feels close without
+// being the previous cramped 75px-wide view.
+const DESKTOP_ZOOMS = [0.6, 1.2, 2.5];
+const TOUCH_TARGET_WIDTHS = [600, 380, 260]; // far → mid → close (world px visible)
+let zoomIndex = 1; // start at middle
 
 function currentZoomLevels() {
-    return ZOOM_TARGET_WORLD_WIDTHS.map(w => CANVAS_W / w);
+    if (IS_TOUCH) {
+        return TOUCH_TARGET_WIDTHS.map(w => CANVAS_W / w);
+    }
+    return DESKTOP_ZOOMS;
 }
 
 function zoomStep(dir) {
