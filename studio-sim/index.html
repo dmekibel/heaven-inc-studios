@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Heaven Inc. Studios</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <canvas id="sim"></canvas>
+    <div id="dialogue-panel" class="hidden">
+        <div id="dialogue-header">
+            <span id="dialogue-name"></span>
+            <span id="dialogue-role"></span>
+            <button id="dialogue-close">X</button>
+        </div>
+        <div id="dialogue-body"></div>
+    </div>
+    <div id="agent-card" class="hidden">
+        <button id="card-close">X</button>
+        <canvas id="card-avatar" width="80" height="80"></canvas>
+        <div id="card-name"></div>
+        <div id="card-role"></div>
+        <div id="card-status"></div>
+        <div id="card-divider"></div>
+        <div id="card-greeting"></div>
+    </div>
+    <div id="chat-bar">
+        <input type="text" id="chat-input" placeholder="Type to talk... (press Enter)" maxlength="80" />
+    </div>
+    <div id="hud">
+        <div id="hud-title">HEAVEN INC. STUDIOS</div>
+        <div id="hud-status"></div>
+    </div>
+    <!-- Mobile twin-stick controls (hidden on desktop) -->
+    <div id="mobile-controls">
+        <div id="stick-left" class="stick-zone">
+            <div class="stick-base"><div class="stick-knob" id="knob-left"></div></div>
+        </div>
+        <div id="stick-right" class="stick-zone">
+            <div class="stick-base"><div class="stick-knob" id="knob-right"></div></div>
+        </div>
+        <button id="mobile-jump">JUMP</button>
+        <button id="mobile-interact">E</button>
+    </div>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,314 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0A0A1A;
+    font-family: 'Courier New', monospace;
+    color: #D4A017;
+}
+
+#sim {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+/* Responsive: fill screen maintaining aspect ratio */
+@media (orientation: landscape) {
+    #sim { width: 100vw; height: auto; max-height: 100vh; }
+}
+@media (orientation: portrait) {
+    #sim { width: 100vw; height: auto; }
+}
+
+#hud {
+    position: fixed;
+    top: 12px; left: 16px;
+    z-index: 5;
+    pointer-events: none;
+}
+
+#hud-title {
+    font-size: 16px;
+    letter-spacing: 4px;
+    color: #FFD700;
+    text-shadow: 0 0 12px rgba(255,215,0,0.5);
+    font-weight: bold;
+}
+
+#hud-status {
+    font-size: 13px;
+    color: #C77DFF;
+    margin-top: 4px;
+}
+
+#dialogue-panel {
+    position: fixed;
+    bottom: 56px; right: 12px;
+    width: 420px;
+    max-height: 400px;
+    background: rgba(10, 10, 26, 0.92);
+    border: 1px solid #D4A017;
+    border-radius: 4px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 12px rgba(212, 160, 23, 0.2);
+}
+
+#dialogue-panel.hidden { display: none; }
+
+#dialogue-header {
+    padding: 8px 12px;
+    border-bottom: 1px solid #3D2B1A;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#dialogue-name {
+    font-size: 12px;
+    font-weight: bold;
+    color: #D4A017;
+}
+
+#dialogue-role {
+    font-size: 9px;
+    color: #8B7D3C;
+    flex: 1;
+}
+
+#dialogue-close {
+    background: none;
+    border: 1px solid #5C4A2A;
+    color: #8B7D3C;
+    cursor: pointer;
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 10px;
+}
+
+#dialogue-close:hover { color: #D4A017; border-color: #D4A017; }
+
+#dialogue-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 1.5;
+    color: #E8C840;
+    max-height: 320px;
+}
+
+#dialogue-body .msg {
+    margin-bottom: 4px;
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-weight: bold;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+}
+
+#dialogue-body .msg.agent {
+    background: rgba(61, 43, 26, 0.4);
+    border-left: 2px solid #D4A017;
+}
+
+#dialogue-body .msg.ceo {
+    background: rgba(212, 160, 23, 0.1);
+    border-left: 2px solid #8B7D3C;
+    color: #E8D5A0;
+}
+
+#dialogue-body .msg .sender {
+    font-size: 9px;
+    color: #8B7D3C;
+    margin-bottom: 2px;
+}
+
+/* Club Penguin style chat bar */
+#chat-bar {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 15;
+    width: 380px;
+    max-width: 90vw;
+    display: none;
+}
+#chat-bar.active {
+    display: block;
+}
+
+#chat-input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.95);
+    border: 3px solid #FFD700;
+    border-radius: 20px;
+    color: #2B1055;
+    padding: 10px 20px;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    font-weight: bold;
+    outline: none;
+    text-align: center;
+    box-shadow: 0 4px 16px rgba(255, 215, 0, 0.3);
+}
+
+#chat-input:focus {
+    border-color: #E91E8F;
+    box-shadow: 0 4px 20px rgba(233, 30, 143, 0.4);
+}
+
+#chat-input::placeholder {
+    color: #9B59B6;
+    font-weight: normal;
+}
+
+/* Agent Card (Club Penguin style) */
+#agent-card {
+    position: fixed;
+    top: 50px; left: 50px;
+    cursor: grab;
+    width: 240px;
+    background: linear-gradient(135deg, #4A90D9, #3A70B0);
+    border: 4px solid #FFD700;
+    border-radius: 16px;
+    z-index: 30;
+    padding: 16px;
+    text-align: center;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+#agent-card.hidden { display: none; }
+
+#card-close {
+    position: absolute;
+    top: 6px; right: 8px;
+    background: rgba(0,0,0,0.3);
+    border: 2px solid #FFD700;
+    border-radius: 50%;
+    color: #FFD700;
+    width: 22px; height: 22px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 18px;
+}
+#card-close:hover { background: rgba(0,0,0,0.5); }
+
+#card-avatar {
+    display: block;
+    margin: 0 auto 8px;
+    border: 3px solid #FFD700;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.15);
+    image-rendering: pixelated;
+}
+
+#card-name {
+    font-size: 20px;
+    font-weight: bold;
+    color: #FFFFFF;
+    letter-spacing: 3px;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.4);
+}
+
+#card-role {
+    font-size: 13px;
+    color: #FFD700;
+    margin-top: 4px;
+    letter-spacing: 1px;
+    font-weight: bold;
+}
+
+#card-status {
+    font-size: 12px;
+    color: #B8D4F0;
+    margin-top: 6px;
+    font-style: italic;
+}
+
+#card-divider {
+    height: 2px;
+    background: rgba(255,215,0,0.3);
+    margin: 8px 0;
+    border-radius: 1px;
+}
+
+#card-greeting {
+    font-size: 12px;
+    color: #E0E8F0;
+    line-height: 1.4;
+    font-weight: bold;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #0A0A1A; }
+::-webkit-scrollbar-thumb { background: #3D2B1A; }
+
+/* Mobile twin-stick controls */
+#mobile-controls {
+    display: none;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 40vh;
+    pointer-events: none;
+    z-index: 50;
+}
+
+.stick-zone {
+    position: absolute;
+    bottom: 20px;
+    width: 120px; height: 120px;
+    pointer-events: auto;
+    touch-action: none;
+}
+
+#stick-left { left: 30px; }
+#stick-right { right: 30px; }
+
+.stick-base {
+    width: 100%; height: 100%;
+    background: rgba(255, 215, 0, 0.12);
+    border: 2px solid rgba(255, 215, 0, 0.25);
+    border-radius: 50%;
+    position: relative;
+}
+
+.stick-knob {
+    width: 40px; height: 40px;
+    background: rgba(255, 215, 0, 0.35);
+    border: 2px solid rgba(255, 215, 0, 0.5);
+    border-radius: 50%;
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    transition: none;
+}
+
+#mobile-jump, #mobile-interact {
+    position: absolute;
+    pointer-events: auto;
+    background: rgba(255, 215, 0, 0.15);
+    border: 2px solid rgba(255, 215, 0, 0.3);
+    border-radius: 50%;
+    color: #FFD700;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    font-size: 12px;
+    width: 50px; height: 50px;
+    touch-action: none;
+}
+
+#mobile-jump { right: 160px; bottom: 30px; }
+#mobile-interact { right: 160px; bottom: 90px; font-size: 16px; }
+
+@media (hover: none) and (pointer: coarse) {
+    #mobile-controls { display: block; }
+    #chat-bar { bottom: 42vh; }
+}

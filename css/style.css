@@ -1,0 +1,134 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #1a1a2e;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+#game {
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+#touch-controls {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+}
+
+#joystick-zone {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    width: 140px;
+    height: 140px;
+    pointer-events: auto;
+}
+
+#joystick-base {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: rgba(176, 136, 255, 0.25);
+    border: 3px solid rgba(176, 136, 255, 0.5);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#joystick-stick {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(255, 215, 0, 0.7);
+    border: 2px solid rgba(255, 215, 0, 0.9);
+    position: absolute;
+    transition: none;
+}
+
+#shoot-buttons {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 140px;
+    height: 140px;
+    pointer-events: auto;
+    display: grid;
+    grid-template-areas:
+        ". up ."
+        "left . right"
+        ". down .";
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 4px;
+}
+
+.shoot-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 8px;
+    border: 2px solid rgba(255, 215, 0, 0.7);
+    background: rgba(255, 215, 0, 0.2);
+    color: #FFD700;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.shoot-btn:active {
+    background: rgba(255, 215, 0, 0.5);
+}
+
+#shoot-up {
+    grid-area: up;
+    justify-self: center;
+}
+#shoot-up::after { content: ""; display: block; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 12px solid #FFD700; }
+
+#shoot-left {
+    grid-area: left;
+    align-self: center;
+}
+#shoot-left::after { content: ""; display: block; width: 0; height: 0; border-top: 8px solid transparent; border-bottom: 8px solid transparent; border-right: 12px solid #FFD700; }
+
+#shoot-right {
+    grid-area: right;
+    align-self: center;
+}
+#shoot-right::after { content: ""; display: block; width: 0; height: 0; border-top: 8px solid transparent; border-bottom: 8px solid transparent; border-left: 12px solid #FFD700; }
+
+#shoot-down {
+    grid-area: down;
+    justify-self: center;
+}
+#shoot-down::after { content: ""; display: block; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 12px solid #FFD700; }
+
+@media (pointer: coarse), (max-width: 768px) {
+    #touch-controls {
+        display: block;
+    }
+}
