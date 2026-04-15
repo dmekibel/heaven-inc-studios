@@ -663,26 +663,49 @@ function init() {
     canvas.addEventListener('wheel', handleWheel, { passive: false });
 
     // Mobile twin-stick controls
+    // Left stick: movement + TAP to toggle skateboard
     setupMobileStick('stick-left', 'knob-left', (dx, dy) => {
-        // Left stick → movement (simulates WASD)
         keys['w'] = dy < -0.3; keys['s'] = dy > 0.3;
         keys['a'] = dx < -0.3; keys['d'] = dx > 0.3;
     });
+    const stickLeft = document.getElementById('stick-left');
+    if (stickLeft) {
+        let leftTapTime = 0;
+        stickLeft.addEventListener('touchstart', e => {
+            leftTapTime = Date.now();
+            initAudio(); // unlock iOS audio on first touch
+        });
+        stickLeft.addEventListener('touchend', e => {
+            if (Date.now() - leftTapTime < 200) skateMode = !skateMode; // quick tap = toggle skate
+        });
+    }
+    // Right stick: aim/shoot/tricks + TAP to jump
     setupMobileStick('stick-right', 'knob-right', (dx, dy) => {
-        // Right stick → shooting (simulates arrows)
         keys['arrowup'] = dy < -0.3; keys['arrowdown'] = dy > 0.3;
         keys['arrowleft'] = dx < -0.3; keys['arrowright'] = dx > 0.3;
     });
-    const jumpBtn = document.getElementById('mobile-jump');
-    if (jumpBtn) {
-        jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); keys[' '] = true; });
-        jumpBtn.addEventListener('touchend', e => { e.preventDefault(); keys[' '] = false; });
+    const stickRight = document.getElementById('stick-right');
+    if (stickRight) {
+        let rightTapTime = 0;
+        stickRight.addEventListener('touchstart', e => { rightTapTime = Date.now(); });
+        stickRight.addEventListener('touchend', e => {
+            if (Date.now() - rightTapTime < 200) { keys[' '] = true; setTimeout(() => { keys[' '] = false; }, 50); }
+        });
     }
+    // Interact button
     const interactBtn = document.getElementById('mobile-interact');
     if (interactBtn) {
-        interactBtn.addEventListener('touchstart', e => { e.preventDefault(); keys['e'] = true; });
+        interactBtn.addEventListener('touchstart', e => { e.preventDefault(); keys['e'] = true; initAudio(); });
         interactBtn.addEventListener('touchend', e => { e.preventDefault(); keys['e'] = false; });
     }
+    // ESC button (exit dungeon)
+    const escBtn = document.getElementById('mobile-esc');
+    if (escBtn) {
+        escBtn.addEventListener('touchstart', e => { e.preventDefault(); keys['escape'] = true; });
+        escBtn.addEventListener('touchend', e => { e.preventDefault(); keys['escape'] = false; });
+    }
+    // Unlock iOS audio on any canvas touch
+    canvas.addEventListener('touchstart', () => { initAudio(); if (!musicPlaying) startMusic(); }, { once: true });
 
     document.getElementById('dialogue-close').addEventListener('click', closeDialogue);
     document.getElementById('card-close').addEventListener('click', () => {
@@ -3049,22 +3072,29 @@ function updateDungeon() {
 
     updateJumpAndTricks();
 
-    // Shooting — arrows when grounded only (mid-air = tricks)
+    // Shooting — arrows follow SCREEN direction (up=up on screen), 8 directions with diagonals
     if (DG.fireCooldown > 0) DG.fireCooldown--;
     if (jumpHeight >= -1) {
         let sx = 0, sy = 0;
-        if (keys['arrowup']) sy = -1;
-        if (keys['arrowdown']) sy = 1;
-        if (keys['arrowleft']) sx = -1;
-        if (keys['arrowright']) sx = 1;
+        if (keys['arrowup']) sy -= 1;
+        if (keys['arrowdown']) sy += 1;
+        if (keys['arrowleft']) sx -= 1;
+        if (keys['arrowright']) sx += 1;
         if ((sx || sy) && DG.fireCooldown <= 0) {
             const slen = Math.sqrt(sx*sx+sy*sy); sx/=slen; sy/=slen;
+            // Convert screen direction to world direction (inverse iso)
+            // Screen (sx,sy) → world: wx = sx + 2*sy, wy = 2*sy - sx (simplified inverse)
+            const wx = sx + sy;
+            const wy = sy - sx;
+            const wlen = Math.sqrt(wx*wx+wy*wy) || 1;
+            const dx = (wx/wlen) * DG.playerShotSpeed;
+            const dy = (wy/wlen) * DG.playerShotSpeed;
             // Main arrow
-            DG.projectiles.push({ x: player.x, y: player.y, dx: sx * DG.playerShotSpeed, dy: sy * DG.playerShotSpeed,
+            DG.projectiles.push({ x: player.x, y: player.y, dx, dy,
                 damage: DG.playerDmg, range: DG.playerShotRange, size: DG.playerShotSize, traveled: 0, isPlayer: true, isArrow: true, piercing: DG.piercing });
-            // Triple shot spread
+            // Triple shot spread (in world space)
             if (DG.tripleShot) {
-                const angle = Math.atan2(sy, sx);
+                const angle = Math.atan2(dy, dx);
                 for (const off of [-0.25, 0.25]) {
                     const a = angle + off;
                     DG.projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a) * DG.playerShotSpeed, dy: Math.sin(a) * DG.playerShotSpeed,
