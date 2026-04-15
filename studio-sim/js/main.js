@@ -13,15 +13,16 @@ const LEVEL_H = 14;
 
 // Room templates: id, name, size, colors, elevation, furniture list
 const ROOM_DEFS = [
-    { id: 'vault', name: 'ANCIENT VAULT', w: 10, h: 8, floor1: '#2A1840', floor2: '#3A2855', wallColor: '#7744AA', elevated: true },
-    { id: 'design', name: 'DESIGN FORGE', w: 10, h: 8, floor1: '#3A1828', floor2: '#4A2838', wallColor: '#CC3366', elevated: true },
-    { id: 'art', name: 'ART SANCTUM', w: 10, h: 8, floor1: '#351030', floor2: '#451845', wallColor: '#DD2288', elevated: true },
-    { id: 'hub', name: 'GRAND HALL', w: 16, h: 10, floor1: '#1E1230', floor2: '#2A1A40', wallColor: '#8855AA' },
-    { id: 'engine', name: 'ENGINE WORKS', w: 9, h: 8, floor1: '#0A2A0A', floor2: '#153015', wallColor: '#22AA22' },
-    { id: 'oracle', name: 'ORACLE TOWER', w: 8, h: 8, floor1: '#2A2200', floor2: '#3A3010', wallColor: '#CCAA00' },
-    { id: 'qa', name: 'TESTING GROVE', w: 9, h: 7, floor1: '#2A1800', floor2: '#3A2810', wallColor: '#DD7722' },
-    { id: 'writer', name: 'SCRIBES DEN', w: 9, h: 7, floor1: '#0A1A2A', floor2: '#152535', wallColor: '#2299CC' },
-    { id: 'ceo', name: 'THRONE ROOM', w: 10, h: 6, floor1: '#2A2000', floor2: '#3A2A10', wallColor: '#DAA520' },
+    // Fairytale magical studio — pastel tones with warm glow
+    { id: 'vault', name: 'LORE VAULT', w: 10, h: 8, floor1: '#1A1428', floor2: '#221A30', wallColor: '#9966CC', elevated: true },
+    { id: 'design', name: 'DESIGN LAB', w: 10, h: 8, floor1: '#1E1018', floor2: '#281420', wallColor: '#DD6699', elevated: true },
+    { id: 'art', name: 'ART STUDIO', w: 10, h: 8, floor1: '#1A1022', floor2: '#22142A', wallColor: '#CC55AA', elevated: true },
+    { id: 'hub', name: 'GRAND HALL', w: 16, h: 10, floor1: '#14101E', floor2: '#1C1428', wallColor: '#BB88DD' },
+    { id: 'engine', name: 'ENGINE ROOM', w: 9, h: 8, floor1: '#0E1818', floor2: '#142020', wallColor: '#44BBAA' },
+    { id: 'oracle', name: 'ORACLE DEN', w: 8, h: 8, floor1: '#1A1808', floor2: '#22200E', wallColor: '#DDAA44' },
+    { id: 'qa', name: 'QA LAB', w: 9, h: 7, floor1: '#18100E', floor2: '#201814', wallColor: '#DD8844' },
+    { id: 'writer', name: 'WRITERS ROOM', w: 9, h: 7, floor1: '#0E1420', floor2: '#141C28', wallColor: '#55AADD' },
+    { id: 'ceo', name: 'CEO OFFICE', w: 10, h: 6, floor1: '#1C1408', floor2: '#241C0E', wallColor: '#DDAA33' },
 ];
 
 // Layout: place rooms at specific positions. Connections auto-generate corridors.
@@ -121,15 +122,15 @@ function buildModularWorld() {
 
 // === COLORS ===
 const C = {
-    bg: '#08041A',
-    wallTrim: '#FFD700',
-    skinTone: '#FFCC99', white: '#FFFFFF', black: '#1A0030',
-    magenta: '#FF2D9B', green: '#33DD33', gold: '#FFD700', pink: '#FF69B4',
-    cyan: '#00E5E5', orange: '#FF9922', red: '#FF3355', blue: '#3388FF',
-    purple: '#AA44FF', yellow: '#FFEE33',
-    bubbleBg: '#FFFFFF', bubbleText: '#220044',
-    corridorFloor: '#181028', corridorFloor2: '#201838',
-    screenBg: '#110022', screenGlow: '#00FF88',
+    bg: '#0A0A18',
+    wallTrim: '#DAA520',
+    skinTone: '#E8B878', white: '#F0E8D8', black: '#0A0A14',
+    magenta: '#CC6688', green: '#558844', gold: '#DAA520', pink: '#CC7788',
+    cyan: '#4488AA', orange: '#CC8833', red: '#AA3344', blue: '#446688',
+    purple: '#8866AA', yellow: '#CCAA44',
+    bubbleBg: '#F0E8D0', bubbleText: '#2A1A08',
+    corridorFloor: '#100E14', corridorFloor2: '#161220',
+    screenBg: '#0A0808', screenGlow: '#CCAA44',
 };
 
 // === AGENTS ===
@@ -187,6 +188,13 @@ let boardFlipState = null;   // null or { name, rotation, duration, timer, lande
 let trickCombo = 0;
 let trickDisplay = null;
 let pumpCharge = 0;
+
+// === JUICE SYSTEMS (screen shake, trails, score) ===
+let screenShake = 0;
+let trickScore = 0;
+let speedBoostTimer = 0;
+let dustParticles = []; // landing dust puffs
+let trailParticles = []; // speed lines behind board
 
 const BOARD_FLIPS = {
     // Up/Down = kickflip/heelflip (board flip)
@@ -477,6 +485,160 @@ function getRoomAt(wx, wy) {
 }
 
 // === INIT ===
+// === AUDIO SYSTEM (procedural — no files needed) ===
+let audioCtx = null;
+let musicGain = null;
+let sfxGain = null;
+let musicPlaying = false;
+
+function initAudio() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = 0.15;
+    musicGain.connect(audioCtx.destination);
+    sfxGain = audioCtx.createGain();
+    sfxGain.gain.value = 0.3;
+    sfxGain.connect(audioCtx.destination);
+}
+
+function playTone(freq, duration, type, vol, dest) {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime((vol || 0.3) * sfxGain.gain.value, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(dest || audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+function playNoise(duration, vol) {
+    if (!audioCtx) return;
+    const bufferSize = audioCtx.sampleRate * duration;
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(vol || 0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.value = 3000;
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioCtx.destination);
+    source.start();
+}
+
+const SFX = {
+    ollie() {
+        // Soft pop
+        playTone(600, 0.05, 'sine', 0.08);
+        playTone(900, 0.03, 'sine', 0.05);
+    },
+    trickLand() {
+        // Satisfying catch — ascending tone
+        playTone(400, 0.1, 'sine', 0.2);
+        setTimeout(() => playTone(600, 0.1, 'sine', 0.2), 30);
+        setTimeout(() => playTone(800, 0.15, 'sine', 0.25), 60);
+    },
+    bail() {
+        // Thud + buzz
+        playTone(120, 0.2, 'sawtooth', 0.15);
+        playNoise(0.15, 0.1);
+    },
+    shoot() {
+        // Quiet halo ping
+        playTone(1200, 0.04, 'sine', 0.04);
+    },
+    hit() {
+        // Taking damage — low thud
+        playTone(80, 0.15, 'sine', 0.3);
+        playTone(60, 0.2, 'triangle', 0.2);
+    },
+    enemyDeath() {
+        // Fairy poof — ascending sparkle
+        playTone(600, 0.08, 'sine', 0.15);
+        setTimeout(() => playTone(900, 0.08, 'sine', 0.12), 40);
+        setTimeout(() => playTone(1300, 0.1, 'sine', 0.1), 80);
+    },
+    pickup() {
+        // Coin/item collect
+        playTone(800, 0.05, 'sine', 0.2);
+        setTimeout(() => playTone(1200, 0.08, 'sine', 0.2), 50);
+    },
+    doorOpen() {
+        // Magical door unlock
+        playTone(300, 0.15, 'sine', 0.15);
+        setTimeout(() => playTone(450, 0.15, 'sine', 0.15), 100);
+        setTimeout(() => playTone(600, 0.2, 'sine', 0.2), 200);
+    },
+    skateRoll() {
+        // Subtle rolling rumble
+        playNoise(0.08, 0.02);
+    },
+    enterDungeon() {
+        // Dramatic descending
+        playTone(600, 0.2, 'sine', 0.2);
+        setTimeout(() => playTone(400, 0.2, 'sine', 0.2), 150);
+        setTimeout(() => playTone(300, 0.3, 'sine', 0.25), 300);
+    },
+    menuSelect() {
+        playTone(500, 0.08, 'sine', 0.2);
+        setTimeout(() => playTone(700, 0.1, 'sine', 0.2), 50);
+    },
+};
+
+// Lo-fi ambient music — procedural noir jazz loop
+let musicInterval = null;
+function startMusic() {
+    if (musicPlaying || !audioCtx) return;
+    musicPlaying = true;
+
+    // Ambient pad — warm chord drone
+    const chords = [
+        [220, 277, 330],  // Am
+        [196, 247, 294],  // G
+        [175, 220, 262],  // F
+        [165, 208, 247],  // E
+    ];
+    let chordIdx = 0;
+
+    function playChord() {
+        if (!musicPlaying) return;
+        const chord = chords[chordIdx % chords.length];
+        chordIdx++;
+        for (const freq of chord) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.04, audioCtx.currentTime + 0.5);
+            gain.gain.linearRampToValueAtTime(0.03, audioCtx.currentTime + 3);
+            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 4);
+            osc.connect(gain);
+            gain.connect(musicGain);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 4);
+        }
+    }
+
+    playChord();
+    musicInterval = setInterval(playChord, 4000);
+}
+
+function stopMusic() {
+    musicPlaying = false;
+    if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
+}
+
 function init() {
     canvas = document.getElementById('sim');
     ctx = canvas.getContext('2d');
@@ -869,7 +1031,9 @@ function updatePlayerMovement() {
     if (mLen > 0) { mx /= mLen; my /= mLen; }
 
     const skating = skateMode;
-    const spd = skating ? player.speed * 1.0 : player.speed;
+    const boost = speedBoostTimer > 0 ? 1.4 : 1.0;
+    if (speedBoostTimer > 0) speedBoostTimer--;
+    const spd = (skating ? player.speed * 1.0 : player.speed) * boost;
 
     if (skating) {
         if (mx || my) {
@@ -925,6 +1089,7 @@ function updateJumpAndTricks() {
         jumpVel = skating ? -3.5 : -2.5;
         boardFlipState = null;
         bodySpinAngle = 0;
+        SFX.ollie();
     }
     // Tricks mid-air
     if (jumpHeight < -3) {
@@ -964,24 +1129,39 @@ function updateJumpAndTricks() {
         jumpHeight += jumpVel; jumpVel += 0.25;
         if (jumpHeight >= 0) {
             jumpHeight = 0; jumpVel = 0;
-            // Score tricks on landing
+            // Score tricks on landing + juice effects
             if (boardFlipState) {
                 if (boardFlipState.landed) {
                     trickCombo++;
+                    const points = trickCombo * 100;
+                    trickScore += points;
                     const combo = trickCombo > 1 ? ` x${trickCombo}` : '';
-                    trickDisplay = { text: boardFlipState.name + combo, timer: 60 };
+                    trickDisplay = { text: boardFlipState.name + combo + ` +${points}`, timer: 70 };
+                    screenShake = 4 + trickCombo * 2;
+                    SFX.trickLand();
+                    speedBoostTimer = 30; // brief speed boost reward
+                    // Landing dust
+                    for (let d = 0; d < 5; d++) dustParticles.push({ x: player.x + (Math.random()-0.5)*8, y: player.y + (Math.random()-0.5)*4, vx: (Math.random()-0.5)*2, vy: -Math.random()*0.5, life: 15 });
                 } else {
                     trickDisplay = { text: 'BAIL!', timer: 40 };
+                    screenShake = 6; SFX.bail();
                     trickCombo = 0;
                 }
             } else if (Math.abs(bodySpinAngle) >= 150) {
                 const dir = bodySpinAngle > 0 ? 'BS' : 'FS';
                 const deg = Math.round(Math.abs(bodySpinAngle) / 180) * 180;
                 trickCombo++;
+                const points = trickCombo * 50;
+                trickScore += points;
                 const combo = trickCombo > 1 ? ` x${trickCombo}` : '';
-                trickDisplay = { text: `${dir} ${deg}${combo}`, timer: 60 };
+                trickDisplay = { text: `${dir} ${deg}${combo} +${points}`, timer: 60 };
+                screenShake = 3;
+                speedBoostTimer = 20;
+                for (let d = 0; d < 3; d++) dustParticles.push({ x: player.x + (Math.random()-0.5)*6, y: player.y, vx: (Math.random()-0.5)*1.5, vy: -Math.random()*0.3, life: 12 });
             } else {
                 trickCombo = 0;
+                // Small landing dust even without trick
+                if (skateMode) for (let d = 0; d < 2; d++) dustParticles.push({ x: player.x + (Math.random()-0.5)*4, y: player.y, vx: (Math.random()-0.5)*1, vy: -Math.random()*0.2, life: 8 });
             }
             bodySpinAngle = 0;
             boardFlipState = null;
@@ -990,23 +1170,30 @@ function updateJumpAndTricks() {
 }
 
 function drawTitle() {
-    ctx.fillStyle = '#06020F';
+    // Gradient background — deep purple to pink
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    bgGrad.addColorStop(0, '#1A0828');
+    bgGrad.addColorStop(0.5, '#2A1040');
+    bgGrad.addColorStop(1, '#180830');
+    ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    // Starfield
-    for (let i = 0; i < 50; i++) {
+    // Sparkle stars — pink, gold, white, lavender
+    for (let i = 0; i < 60; i++) {
         const sx = ((i * 73 + 17) % CANVAS_W);
         const sy = ((i * 47 + 31) % CANVAS_H);
-        const b = 0.2 + Math.sin(time * 0.02 + i) * 0.15;
+        const b = 0.2 + Math.sin(time * 0.025 + i * 1.3) * 0.2;
         ctx.globalAlpha = b;
-        ctx.fillStyle = i % 3 === 0 ? '#FFD700' : '#FFFFFF';
-        ctx.fillRect(sx, sy, 1, 1);
+        const colors = ['#FFD700', '#FF88CC', '#FFFFFF', '#BB88FF', '#88DDFF'];
+        ctx.fillStyle = colors[i % 5];
+        const sz = i % 7 === 0 ? 2 : 1;
+        ctx.fillRect(sx, sy, sz, sz);
     }
     ctx.globalAlpha = 1;
 
-    // Title glow
+    // Title glow — pink/gold
     const glow = 0.7 + Math.sin(time * 0.03) * 0.15;
-    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 20 * glow;
+    ctx.shadowColor = '#FF88CC'; ctx.shadowBlur = 25 * glow;
 
     // Title
     const titleY = CANVAS_H * 0.28 + Math.sin(time * 0.02) * 3;
@@ -1059,7 +1246,11 @@ function loop() { requestAnimationFrame(loop); update(); draw(); }
 function update() {
     time++;
     if (gameMode === 'title') {
-        if (keys[' '] || keys['enter']) { keys[' '] = false; keys['enter'] = false; gameMode = 'studio'; }
+        if (keys[' '] || keys['enter']) {
+            keys[' '] = false; keys['enter'] = false;
+            initAudio(); startMusic(); SFX.menuSelect();
+            gameMode = 'studio';
+        }
         return;
     }
     if (gameMode === 'dungeon') { updateDungeon(); return; }
@@ -1259,6 +1450,17 @@ function update() {
         }
     }
 
+    // Speed trail particles (skating fast)
+    const spd2 = Math.sqrt((player.vx||0)**2 + (player.vy||0)**2);
+    if (skateMode && spd2 > 1.5 && time % 3 === 0) {
+        if (time % 15 === 0) SFX.skateRoll(); // subtle wheel rumble
+        trailParticles.push({ x: player.x - (player.vx||0)*2, y: player.y - (player.vy||0)*2, life: 10,
+            color: speedBoostTimer > 0 ? '#FFD700' : '#8866AA' });
+    }
+    // Update trail + dust particles
+    for (let i = trailParticles.length - 1; i >= 0; i--) { trailParticles[i].life--; if (trailParticles[i].life <= 0) trailParticles.splice(i, 1); }
+    for (let i = dustParticles.length - 1; i >= 0; i--) { const d = dustParticles[i]; d.x += d.vx; d.y += d.vy; d.life--; if (d.life <= 0) dustParticles.splice(i, 1); }
+
     // Meeting system
     updateMeeting();
 
@@ -1280,7 +1482,7 @@ function update() {
         const ddist = Math.sqrt((player.x - doorX) ** 2 + (player.y - doorY) ** 2);
         if (ddist < 40) {
             keys['e'] = false;
-            dungeonTransition = 30; // fade to dungeon
+            dungeonTransition = 30; SFX.enterDungeon();
             return;
         }
     }
@@ -1310,10 +1512,14 @@ function draw() {
 
     ctx.save();
     try {
-    // Camera transform (isometric projection)
+    // Camera transform (isometric projection) + screen shake
     const z = camera.zoom;
     const isoCam = worldToIso(camera.x, camera.y);
-    ctx.translate(CANVAS_W / 2, CANVAS_H / 2);
+    const shakeX = screenShake > 0 ? (Math.random() - 0.5) * screenShake : 0;
+    const shakeY = screenShake > 0 ? (Math.random() - 0.5) * screenShake : 0;
+    if (screenShake > 0) screenShake *= 0.85;
+    if (screenShake < 0.3) screenShake = 0;
+    ctx.translate(CANVAS_W / 2 + shakeX, CANVAS_H / 2 + shakeY);
     ctx.scale(z, z);
     ctx.translate(-isoCam.x, -isoCam.y);
 
@@ -1399,7 +1605,36 @@ function draw() {
     // minimap removed
     // minimap removed
 
-    // (zoom indicator removed — clean UI)
+    // Speed trail + dust particles (screen space, after restore)
+    // Trail
+    for (const t of trailParticles) {
+        const tp = worldToIso(t.x, t.y);
+        // Convert to screen space with camera
+        const sx = (tp.x - isoCam.x) * z + CANVAS_W / 2;
+        const sy = (tp.y - isoCam.y) * z + CANVAS_H / 2;
+        ctx.globalAlpha = t.life / 10 * 0.4;
+        ctx.fillStyle = t.color;
+        ctx.fillRect(sx - 1, sy - 1, 2, 2);
+    }
+    // Dust
+    for (const d of dustParticles) {
+        const dp = worldToIso(d.x, d.y);
+        const sx = (dp.x - isoCam.x) * z + CANVAS_W / 2;
+        const sy = (dp.y - isoCam.y) * z + CANVAS_H / 2;
+        ctx.globalAlpha = d.life / 15 * 0.5;
+        ctx.fillStyle = '#CCBBAA';
+        const size = 2 + (15 - d.life) * 0.2;
+        ctx.beginPath(); ctx.ellipse(sx, sy, size * z, size * z * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Trick score display
+    if (trickScore > 0) {
+        ctx.fillStyle = '#FFD700'; ctx.globalAlpha = 0.6;
+        ctx.font = 'bold 9px monospace'; ctx.textAlign = 'right';
+        ctx.fillText('SCORE: ' + trickScore, CANVAS_W - 12, 20);
+        ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+    }
 }
 
 function drawIsoRegion(x, y, w, h, color) {
@@ -1875,11 +2110,11 @@ function drawIsoLamp(wx, wy) {
     const p = worldToIso(wx, wy);
     const glow = 0.4 + Math.sin(time * 0.025 + wx * 0.01) * 0.1;
 
-    // Light pool on floor (radial gradient)
-    const grad = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, 40);
-    grad.addColorStop(0, `rgba(255, 220, 120, ${glow * 0.35})`);
-    grad.addColorStop(0.5, `rgba(255, 180, 80, ${glow * 0.15})`);
-    grad.addColorStop(1, 'rgba(255, 160, 60, 0)');
+    // Warm amber light pool (concept art golden lamp glow)
+    const grad = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, 45);
+    grad.addColorStop(0, `rgba(218, 165, 32, ${glow * 0.4})`);
+    grad.addColorStop(0.4, `rgba(200, 140, 20, ${glow * 0.2})`);
+    grad.addColorStop(1, 'rgba(180, 120, 10, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(p.x - 40, p.y - 20, 80, 50);
 
@@ -1995,8 +2230,8 @@ function drawCharBody(bx, by, bodyColor, shirtColor, facing, talking, talkTime) 
     const diag = f.includes('-'); // diagonal facing
     const flip = (f === 'left' || f === 'down-left' || f === 'up-left') ? -1 : 1;
 
-    // Legs — offset for diagonal
-    ctx.fillStyle = '#333355';
+    // Shoes (cute rounded)
+    ctx.fillStyle = '#222244';
     if (diag) {
         ctx.fillRect(bx - 1 + flip, by + 4, 3, 4);
         ctx.fillRect(bx + flip * 3, by + 4, 3, 4);
@@ -2013,6 +2248,9 @@ function drawCharBody(bx, by, bodyColor, shirtColor, facing, talking, talkTime) 
     ctx.beginPath(); ctx.ellipse(bx + (diag ? flip : 0), by + 1, bw, 5, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = shirtColor;
     ctx.beginPath(); ctx.ellipse(bx + (diag ? flip : 0), by + 1, bw - 1, 4, 0, 0, Math.PI * 2); ctx.fill();
+    // Collar detail
+    ctx.fillStyle = darkenColor(shirtColor, 0.7);
+    ctx.fillRect(bx - 2, by - 3, 4, 2);
     // Arms
     if (diag) {
         // 3/4 view: one arm more visible
@@ -2099,6 +2337,15 @@ function drawCharHead(bx, by, hairColor, facing, talking, talkTime) {
         ctx.fillStyle = C.white;
         ctx.fillRect(hx - 2, by - 12, 1, 1);
         ctx.fillRect(hx + 4, by - 12, 1, 1);
+        // Nose
+        ctx.fillStyle = '#E0A878';
+        ctx.fillRect(hx, by - 7, 1, 2);
+        // Blush marks (cute FOP style)
+        ctx.fillStyle = '#FF8888'; ctx.globalAlpha = 0.25;
+        ctx.beginPath(); ctx.ellipse(hx - 5, by - 6, 2, 1.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(hx + 5, by - 6, 2, 1.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+        // Mouth
         ctx.fillStyle = talking ? '#FF4466' : '#DD8899';
         if (talking) { const mw = 3 + Math.sin(talkTime * 0.3) * 2; ctx.beginPath(); ctx.ellipse(hx, by - 4, mw, 2, 0, 0, Math.PI * 2); ctx.fill(); }
         else ctx.fillRect(hx - 2, by - 5, 4, 1);
@@ -2126,17 +2373,24 @@ function drawAgent(a) {
     ctx.globalAlpha = 0.7 + Math.sin(time * 0.04 + a.y * 0.1) * 0.2;
     ctx.beginPath(); ctx.ellipse(bx, by - 21, 6, 2.5, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = 1;
-    // Wings
+    // Wings — big, double-layered, shimmering
+    const wf = Math.sin(time * 0.08 + a.x * 0.1) * 0.4; // flutter
     if (a.facing !== 'left' && a.facing !== 'right') {
-        ctx.fillStyle = '#DDDDFF'; ctx.globalAlpha = 0.4;
-        ctx.beginPath(); ctx.ellipse(bx - 8, by + 1, 4, 3, -0.3, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(bx + 8, by + 1, 4, 3, 0.3, 0, Math.PI * 2); ctx.fill();
+        // Outer wings (larger, more transparent)
+        ctx.fillStyle = a.color; ctx.globalAlpha = 0.15;
+        ctx.beginPath(); ctx.ellipse(bx - 11, by - 2, 8 + wf, 6, -0.3, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(bx + 11, by - 2, 8 + wf, 6, 0.3, 0, Math.PI * 2); ctx.fill();
+        // Inner wings (brighter)
+        ctx.fillStyle = '#EEDDFF'; ctx.globalAlpha = 0.3;
+        ctx.beginPath(); ctx.ellipse(bx - 8, by, 5, 4, -0.2, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(bx + 8, by, 5, 4, 0.2, 0, Math.PI * 2); ctx.fill();
         ctx.globalAlpha = 1;
     } else {
-        // Side view - one wing visible behind
         const flip = a.facing === 'left' ? 1 : -1;
-        ctx.fillStyle = '#DDDDFF'; ctx.globalAlpha = 0.4;
-        ctx.beginPath(); ctx.ellipse(bx - flip * 6, by, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = a.color; ctx.globalAlpha = 0.15;
+        ctx.beginPath(); ctx.ellipse(bx - flip * 10, by - 1, 9 + wf, 7, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#EEDDFF'; ctx.globalAlpha = 0.3;
+        ctx.beginPath(); ctx.ellipse(bx - flip * 7, by, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
         ctx.globalAlpha = 1;
     }
     // Name
@@ -2196,15 +2450,15 @@ function drawPlayer() {
         ctx.fillRect(bx + 1, by + 6, 3, 6);
     }
 
-    // Body (golden suit)
+    // Body (warm golden suit — Michael from concept art)
     if (side) {
-        ctx.fillStyle = '#996B00'; ctx.fillRect(bx - 4, by - 3, 8, 10);
+        ctx.fillStyle = '#7A5A10'; ctx.fillRect(bx - 4, by - 3, 8, 10);
         ctx.fillStyle = C.gold; ctx.fillRect(bx - 3, by - 2, 6, 8);
         ctx.fillStyle = C.gold; ctx.fillRect(bx + flip * 5, by, 3, 3);
         ctx.fillStyle = C.skinTone;
         ctx.beginPath(); ctx.arc(bx + flip * 8, by + 1, 2, 0, Math.PI * 2); ctx.fill();
     } else {
-        ctx.fillStyle = '#996B00'; ctx.fillRect(bx - 6, by - 3, 12, 10);
+        ctx.fillStyle = '#7A5A10'; ctx.fillRect(bx - 6, by - 3, 12, 10);
         ctx.fillStyle = C.gold; ctx.fillRect(bx - 5, by - 2, 10, 8);
         if (!back) {
             ctx.fillStyle = C.white; ctx.fillRect(bx - 2, by - 2, 4, 6);
@@ -2273,6 +2527,14 @@ function drawPlayer() {
         ctx.fillRect(bx - 4, by - 12, 2, 2); ctx.fillRect(bx + 3, by - 12, 2, 2);
         ctx.fillStyle = '#4488FF';
         ctx.fillRect(bx - 4, by - 11, 1, 1); ctx.fillRect(bx + 3, by - 11, 1, 1);
+        // Nose
+        ctx.fillStyle = '#E0A878'; ctx.fillRect(bx, by - 9, 1, 2);
+        // Blush
+        ctx.fillStyle = '#FF8888'; ctx.globalAlpha = 0.2;
+        ctx.beginPath(); ctx.ellipse(bx - 6, by - 8, 2, 1.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(bx + 6, by - 8, 2, 1.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+        // Mouth
         ctx.fillStyle = '#CC8888'; ctx.fillRect(bx - 2, by - 7, 4, 1);
     }
 
@@ -2599,13 +2861,14 @@ const DG = {
     floorNum: 1, transTimer: 0, transDir: null,
     playerHP: 6, playerMaxHP: 6, playerDmg: 1, playerFireRate: 18,
     playerShotSpeed: 3, playerShotRange: 120, playerShotSize: 4,
+    tripleShot: false, piercing: false,
     fireCooldown: 0, iframes: 0,
 };
 
 function initDungeon() {
     DG.floorNum = 1;
     DG.playerHP = 6; DG.playerMaxHP = 6; DG.playerDmg = 1;
-    DG.playerFireRate = 18; DG.playerShotSpeed = 3;
+    DG.playerFireRate = 18; DG.playerShotSpeed = 3; DG.tripleShot = false; DG.piercing = false;
     DG.playerShotRange = 120; DG.playerShotSize = 4;
     skateMode = true;
     player.vx = 0; player.vy = 0;
@@ -2693,19 +2956,32 @@ function dgSpawnEnemies() {
         const ey = (2 + Math.random() * (DG.ROOM_H - 4)) * T;
         if (Math.abs(ex - player.x) < 40 && Math.abs(ey - player.y) < 40) continue;
         const isBoss = room.type === 'boss';
-        const fairyTypes = ['pixie', 'sprite', 'imp']; // chaser, shooter, charger
-        const fairyColors = ['#FF69B4', '#44FFAA', '#AA88FF', '#FF8844', '#44DDFF', '#FFDD44'];
+        // 6 enemy tiers — each with unique behavior
+        const tierPool = [
+            // Tier 1: Wisp — floats in place, contact damage only, doesn't chase
+            { type: 'wisp', hp: 1, size: 8, speed: 0, damage: 1, color: '#88DDFF' },
+            // Tier 2: Pixie — slowly drifts toward player
+            { type: 'pixie', hp: 2, size: 10, speed: 0.3, damage: 1, color: '#FF88CC' },
+            // Tier 3: Sprite — hovers at range, shoots magic stars
+            { type: 'sprite', hp: 3, size: 10, speed: 0.4, damage: 1, color: '#AA88FF' },
+            // Tier 4: Imp — charges in bursts, fast and aggressive
+            { type: 'imp', hp: 3, size: 10, speed: 0.5, damage: 1, color: '#FF6644' },
+            // Tier 5: Shade — teleports, appears behind you
+            { type: 'shade', hp: 4, size: 12, speed: 0.6, damage: 2, color: '#8844AA' },
+            // Tier 6: Knight — slow tank, high HP, shoots + chases
+            { type: 'knight', hp: 8, size: 14, speed: 0.25, damage: 2, color: '#CC2255' },
+        ];
+        // Higher floors unlock harder tiers
+        const maxTier = Math.min(tierPool.length, 2 + DG.floorNum * 2);
+        const tier = tierPool[Math.floor(Math.random() * maxTier)];
+        const e = isBoss ? { type: 'boss', hp: 20 + DG.floorNum * 10, size: 16, speed: 0.5, damage: 2, color: '#FF2244' } : { ...tier };
+        e.hp += DG.floorNum - 1; // scale with floor
         DG.enemies.push({
             x: ex, y: ey, vx: 0, vy: 0,
-            type: isBoss ? 'boss' : fairyTypes[Math.floor(Math.random() * fairyTypes.length)],
-            hp: isBoss ? 20 + DG.floorNum * 10 : 2 + DG.floorNum,
-            size: isBoss ? 16 : 10,
-            speed: isBoss ? 0.6 : 0.4 + Math.random() * 0.4,
-            damage: isBoss ? 2 : 1,
-            color: isBoss ? '#FF2244' : fairyColors[i % fairyColors.length],
+            ...e,
             fireCooldown: 0, chargeTimer: 0, chargeDir: null,
-            wandAngle: Math.random() * Math.PI * 2, // wand rotation
-            floatPhase: Math.random() * Math.PI * 2, // fairy float offset
+            teleTimer: 0, wandAngle: Math.random() * Math.PI * 2,
+            floatPhase: Math.random() * Math.PI * 2,
         });
     }
 }
@@ -2729,12 +3005,13 @@ function updateDungeon() {
             else if (d === 'down') DG.currentY++;
             else if (d === 'left') DG.currentX--;
             else if (d === 'right') DG.currentX++;
-            // Reposition player
+            // Reposition player well inside room (avoid re-triggering door)
             const midX = (DG.ROOM_W / 2) * T, midY = (DG.ROOM_H / 2) * T;
-            if (d === 'up') { player.x = midX; player.y = (DG.ROOM_H - 2) * T; }
-            else if (d === 'down') { player.x = midX; player.y = 2 * T; }
-            else if (d === 'left') { player.x = (DG.ROOM_W - 2) * T; player.y = midY; }
-            else if (d === 'right') { player.x = 2 * T; player.y = midY; }
+            if (d === 'up') { player.x = midX; player.y = (DG.ROOM_H - 4) * T; }
+            else if (d === 'down') { player.x = midX; player.y = 4 * T; }
+            else if (d === 'left') { player.x = (DG.ROOM_W - 4) * T; player.y = midY; }
+            else if (d === 'right') { player.x = 4 * T; player.y = midY; }
+            player.vx = 0; player.vy = 0; // kill momentum to prevent sliding back into door
             DG.projectiles = []; DG.enemies = [];
             const room = getDungeonRoom();
             if (room && !room.cleared) dgSpawnEnemies();
@@ -2782,8 +3059,19 @@ function updateDungeon() {
         if (keys['arrowright']) sx = 1;
         if ((sx || sy) && DG.fireCooldown <= 0) {
             const slen = Math.sqrt(sx*sx+sy*sy); sx/=slen; sy/=slen;
+            // Main arrow
             DG.projectiles.push({ x: player.x, y: player.y, dx: sx * DG.playerShotSpeed, dy: sy * DG.playerShotSpeed,
-                damage: DG.playerDmg, range: DG.playerShotRange, size: DG.playerShotSize, traveled: 0, isPlayer: true });
+                damage: DG.playerDmg, range: DG.playerShotRange, size: DG.playerShotSize, traveled: 0, isPlayer: true, isArrow: true, piercing: DG.piercing });
+            // Triple shot spread
+            if (DG.tripleShot) {
+                const angle = Math.atan2(sy, sx);
+                for (const off of [-0.25, 0.25]) {
+                    const a = angle + off;
+                    DG.projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a) * DG.playerShotSpeed, dy: Math.sin(a) * DG.playerShotSpeed,
+                        damage: DG.playerDmg * 0.7, range: DG.playerShotRange * 0.8, size: DG.playerShotSize - 1, traveled: 0, isPlayer: true, isArrow: true, piercing: DG.piercing });
+                }
+            }
+            SFX.shoot();
             DG.fireCooldown = DG.playerFireRate;
         }
     }
@@ -2811,26 +3099,38 @@ function updateDungeon() {
         // Fairy float animation
         e.floatPhase = (e.floatPhase || 0) + 0.06;
 
-        if (e.type === 'pixie' || e.type === 'boss') {
-            // Pixie: floats toward player aggressively
+        if (e.type === 'wisp') {
+            // Wisp: floats in a gentle circle, doesn't chase — contact damage only
+            e.x += Math.cos(e.floatPhase * 0.5) * 0.3;
+            e.y += Math.sin(e.floatPhase * 0.7) * 0.3;
+        } else if (e.type === 'pixie' || e.type === 'boss') {
+            // Pixie/Boss: drifts toward player
             if (dist > 10) { e.x += (dx/dist) * e.speed; e.y += (dy/dist) * e.speed; }
-        } else if (e.type === 'sprite') {
-            // Sprite: hovers at distance, fires magic wand stars
-            if (dist > 80) { e.x += (dx/dist) * e.speed * 0.4; e.y += (dy/dist) * e.speed * 0.4; }
-            else if (dist < 50) { e.x -= (dx/dist) * e.speed * 0.3; e.y -= (dy/dist) * e.speed * 0.3; }
+        } else if (e.type === 'sprite' || e.type === 'knight') {
+            // Sprite: hovers, shoots stars. Knight: slow tank, also shoots
+            const keepDist = e.type === 'knight' ? 40 : 80;
+            if (dist > keepDist) { e.x += (dx/dist) * e.speed; e.y += (dy/dist) * e.speed; }
+            else if (dist < keepDist * 0.6 && e.type === 'sprite') { e.x -= (dx/dist) * e.speed * 0.3; e.y -= (dy/dist) * e.speed * 0.3; }
             e.fireCooldown--;
-            e.wandAngle = Math.atan2(dy, dx); // aim wand at player
-            if (e.fireCooldown <= 0 && dist < 140) {
-                e.fireCooldown = 70;
-                // Magic star projectile
+            e.wandAngle = Math.atan2(dy, dx);
+            if (e.fireCooldown <= 0 && dist < 160) {
+                e.fireCooldown = e.type === 'knight' ? 50 : 70;
                 DG.projectiles.push({ x: e.x, y: e.y, dx: (dx/dist) * 2.5, dy: (dy/dist) * 2.5,
                     damage: e.damage, range: 160, size: 5, traveled: 0, isPlayer: false, isMagic: true });
-                // Poof particles at wand tip
-                for (let p = 0; p < 4; p++) {
-                    DG.particles.push({ x: e.x, y: e.y, vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2 - 1,
-                        life: 20, color: ['#FFD700', '#FF69B4', '#FFFFFF'][p % 3], type: 'poof' });
-                }
+                for (let p = 0; p < 3; p++) DG.particles.push({ x: e.x, y: e.y, vx: (Math.random()-0.5)*2, vy: -Math.random()*1.5, life: 15, color: ['#FFD700', '#FF88CC'][p % 2], type: 'poof' });
             }
+        } else if (e.type === 'shade') {
+            // Shade: teleports near player every few seconds
+            e.teleTimer = (e.teleTimer || 0) + 1;
+            if (e.teleTimer > 120 + Math.random() * 60) {
+                // Teleport behind player
+                const angle = Math.atan2(player.vy || 0, player.vx || 0) + Math.PI;
+                e.x = player.x + Math.cos(angle) * 50 + (Math.random()-0.5)*20;
+                e.y = player.y + Math.sin(angle) * 50 + (Math.random()-0.5)*20;
+                e.teleTimer = 0;
+                for (let p = 0; p < 6; p++) DG.particles.push({ x: e.x, y: e.y, vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3, life: 20, color: '#8844AA', type: 'poof' });
+            }
+            if (dist > 15) { e.x += (dx/dist) * e.speed; e.y += (dy/dist) * e.speed; }
         } else if (e.type === 'imp') {
             if (e.chargeDir) {
                 e.x += e.chargeDir.x * 3; e.y += e.chargeDir.y * 3;
@@ -2851,10 +3151,9 @@ function updateDungeon() {
             if (!p.isPlayer) continue;
             if (Math.abs(p.x - e.x) < e.size && Math.abs(p.y - e.y) < e.size) {
                 e.hp -= p.damage;
-                DG.projectiles.splice(j, 1);
-                // Hit particles
+                if (!p.piercing) DG.projectiles.splice(j, 1);
                 for (let k = 0; k < 3; k++) DG.particles.push({ x: e.x, y: e.y, vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2, life: 15, color: '#FFAA44' });
-                break;
+                if (!p.piercing) break;
             }
         }
 
@@ -2872,6 +3171,12 @@ function updateDungeon() {
                     vx: (Math.random()-0.5)*1.5, vy: -Math.random()*1.5, life: 25,
                     color: ['#FFFFFF', '#FFB0D0', '#B0FFFF', e.color][k % 4], type: 'poof' });
             }
+            // Drop pickup (20% chance health, 10% damage boost)
+            if (Math.random() < 0.3) {
+                const dropType = Math.random() < 0.65 ? 'health' : 'power';
+                DG.items.push({ x: e.x, y: e.y, type: dropType, life: 300 });
+            }
+            screenShake = 3; SFX.enemyDeath();
             continue;
         }
 
@@ -2879,6 +3184,7 @@ function updateDungeon() {
         if (dist < e.size + 6 && DG.iframes <= 0 && jumpHeight >= -2) {
             DG.playerHP -= e.damage;
             DG.iframes = 60;
+            screenShake = 8; SFX.hit();
             for (let k = 0; k < 5; k++) DG.particles.push({ x: player.x, y: player.y, vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3, life: 20, color: '#FF4444' });
         }
     }
@@ -2895,7 +3201,7 @@ function updateDungeon() {
 
     // Room cleared?
     if (room && !room.cleared && DG.enemies.length === 0 && room.type !== 'start') {
-        room.cleared = true;
+        room.cleared = true; SFX.doorOpen();
         // Boss cleared = next floor or win
         if (room.type === 'boss') {
             if (DG.floorNum >= 3) { DG.state = 'win'; return; }
@@ -2906,18 +3212,40 @@ function updateDungeon() {
     }
 
     // Item pickup
+    // Item room — special items with names and effects
     if (room && room.type === 'item' && !room.itemPicked) {
         const ix = (DG.ROOM_W / 2) * T, iy = (DG.ROOM_H / 2) * T;
         if (Math.abs(player.x - ix) < 15 && Math.abs(player.y - iy) < 15) {
             room.itemPicked = true;
-            // Random stat boost
-            const boosts = ['damage', 'speed', 'fireRate', 'range'];
-            const stat = boosts[Math.floor(Math.random() * boosts.length)];
-            if (stat === 'damage') DG.playerDmg += 0.5;
-            else if (stat === 'speed') player.speed += 0.2;
-            else if (stat === 'fireRate') DG.playerFireRate = Math.max(6, DG.playerFireRate - 3);
-            else if (stat === 'range') DG.playerShotRange += 30;
-            for (let k = 0; k < 10; k++) DG.particles.push({ x: ix, y: iy, vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3, life: 30, color: '#FFD700' });
+            const items = [
+                { name: 'GOLDEN BOW', desc: '+Damage +Range', apply() { DG.playerDmg += 0.5; DG.playerShotRange += 20; }, icon: '\u2190', color: '#FFD700' },
+                { name: 'ANGEL SHIELD', desc: '+2 HP', apply() { DG.playerMaxHP += 2; DG.playerHP += 2; }, icon: '\u25C6', color: '#88CCFF' },
+                { name: 'SWIFT WINGS', desc: '+Speed', apply() { player.speed += 0.3; }, icon: '\u2666', color: '#FF88CC' },
+                { name: 'HALO CHARM', desc: '+Fire Rate', apply() { DG.playerFireRate = Math.max(6, DG.playerFireRate - 4); }, icon: '\u25CB', color: '#FFDD44' },
+                { name: 'DIVINE SWORD', desc: '+Big Damage', apply() { DG.playerDmg += 1; DG.playerShotSize += 2; }, icon: '\u2020', color: '#FF4466' },
+                { name: 'FAIRY DUST', desc: '+Triple Shot', apply() { DG.tripleShot = true; }, icon: '\u2605', color: '#CC88FF' },
+                { name: 'CRYSTAL HEART', desc: 'Full Heal', apply() { DG.playerHP = DG.playerMaxHP; }, icon: '\u2665', color: '#FF6688' },
+                { name: 'DARK CLOAK', desc: '+Piercing Shots', apply() { DG.piercing = true; }, icon: '\u25A0', color: '#6644AA' },
+            ];
+            const item = items[Math.floor(Math.random() * items.length)];
+            item.apply();
+            trickDisplay = { text: item.name + ' - ' + item.desc, timer: 90 };
+            screenShake = 5; SFX.pickup();
+            for (let k = 0; k < 12; k++) DG.particles.push({ x: ix, y: iy, vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3, life: 30, color: item.color, type: 'star' });
+        }
+    }
+
+    // Collect enemy drops
+    for (let i = DG.items.length - 1; i >= 0; i--) {
+        const it = DG.items[i];
+        it.life--;
+        if (it.life <= 0) { DG.items.splice(i, 1); continue; }
+        if (Math.abs(player.x - it.x) < 12 && Math.abs(player.y - it.y) < 12) {
+            if (it.type === 'health') { DG.playerHP = Math.min(DG.playerMaxHP, DG.playerHP + 2); }
+            else if (it.type === 'power') { DG.playerDmg += 0.25; }
+            DG.items.splice(i, 1);
+            screenShake = 2; SFX.pickup();
+            for (let k = 0; k < 5; k++) DG.particles.push({ x: it.x, y: it.y, vx: (Math.random()-0.5)*2, vy: -Math.random()*2, life: 20, color: it.type === 'health' ? '#FF4488' : '#FFD700', type: 'star' });
         }
     }
 
@@ -2945,8 +3273,8 @@ function updateDungeon() {
 }
 
 function drawDungeon() {
-    // Background changes per floor
-    const bgColors = ['#08041A', '#041520', '#180810'];
+    // Background — magical deep
+    const bgColors = ['#0A0818', '#061018', '#100814'];
     ctx.fillStyle = bgColors[Math.min(DG.floorNum - 1, 2)];
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -2962,9 +3290,9 @@ function drawDungeon() {
 
     // Fairy world floor colors per floor
     const floorPalettes = [
-        { a: '#2A1045', b: '#1E0835', wall: '#6633AA', wallD: '#442288', obs: '#8844CC' }, // Floor 1: purple enchanted
-        { a: '#0A2535', b: '#061828', wall: '#2288AA', wallD: '#166688', obs: '#33AACC' }, // Floor 2: ocean crystal
-        { a: '#2A0A18', b: '#1E0610', wall: '#CC3366', wallD: '#AA2244', obs: '#DD4488' }, // Floor 3: fire realm
+        { a: '#1A1028', b: '#160E22', wall: '#9966CC', wallD: '#7744AA', obs: '#BB88DD', accent: '#FF88CC' }, // Floor 1: enchanted palace (lavender/pink)
+        { a: '#0A1820', b: '#081418', wall: '#44AACC', wallD: '#338899', obs: '#66CCEE', accent: '#88EEFF' }, // Floor 2: crystal caverns (teal/ice)
+        { a: '#1A0818', b: '#140612', wall: '#CC44AA', wallD: '#AA3388', obs: '#DD66CC', accent: '#FF88DD' }, // Floor 3: fairy queen's domain (magenta)
     ];
     const fp = floorPalettes[Math.min(DG.floorNum - 1, 2)];
 
@@ -2977,18 +3305,37 @@ function drawDungeon() {
         }
     }
 
-    // Magic sparkles on floor (ambient)
-    ctx.globalAlpha = 0.3;
-    for (let i = 0; i < 8; i++) {
-        const sx = ((i * 73 + time * 0.3) % (DG.ROOM_W - 2)) + 1;
-        const sy = ((i * 47 + time * 0.2) % (DG.ROOM_H - 2)) + 1;
+    // Magical floor decorations — glowing runes, flowers, sparkles
+    // Sparkle particles floating
+    for (let i = 0; i < 12; i++) {
+        const sx = ((i * 73 + time * 0.2) % (DG.ROOM_W - 2)) + 1;
+        const sy = ((i * 47 + time * 0.15) % (DG.ROOM_H - 2)) + 1;
         const sp = worldToIso(sx * T, sy * T);
-        const sparkle = Math.sin(time * 0.05 + i * 2) * 0.5 + 0.5;
-        ctx.fillStyle = i % 2 === 0 ? '#FFD700' : '#FF69B4';
-        ctx.globalAlpha = sparkle * 0.3;
-        ctx.fillRect(sp.x - 1, sp.y - 1, 2, 2);
+        const sparkle = Math.sin(time * 0.04 + i * 1.7) * 0.5 + 0.5;
+        const colors = [fp.accent, '#FFD700', '#FFFFFF', fp.wall];
+        ctx.fillStyle = colors[i % 4]; ctx.globalAlpha = sparkle * 0.5;
+        ctx.beginPath(); ctx.arc(sp.x, sp.y - sparkle * 4, 1.5, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
+    // Glowing floor rune in center
+    const rc = worldToIso((DG.ROOM_W/2) * T, (DG.ROOM_H/2) * T);
+    ctx.strokeStyle = fp.accent; ctx.lineWidth = 1; ctx.globalAlpha = 0.15 + Math.sin(time * 0.02) * 0.08;
+    ctx.beginPath(); ctx.ellipse(rc.x, rc.y, T * 2, T, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(rc.x, rc.y, T, T * 0.5, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+    // Corner flowers/crystals
+    const corners = [[2,2],[DG.ROOM_W-3,2],[2,DG.ROOM_H-3],[DG.ROOM_W-3,DG.ROOM_H-3]];
+    for (let ci = 0; ci < corners.length; ci++) {
+        const cp = worldToIso(corners[ci][0]*T, corners[ci][1]*T);
+        const cg = 0.4 + Math.sin(time*0.03+ci*2)*0.2;
+        // Crystal
+        ctx.fillStyle = fp.accent; ctx.globalAlpha = cg;
+        ctx.beginPath(); ctx.moveTo(cp.x, cp.y-10); ctx.lineTo(cp.x+3, cp.y-2); ctx.lineTo(cp.x-3, cp.y-2); ctx.closePath(); ctx.fill();
+        // Glow
+        ctx.fillStyle = fp.accent; ctx.globalAlpha = cg * 0.3;
+        ctx.beginPath(); ctx.ellipse(cp.x, cp.y-4, 6, 4, 0, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+    }
 
     // Glowing walls — back walls with magical glow
     const wallGlow = 0.6 + Math.sin(time * 0.02) * 0.15;
@@ -3031,6 +3378,19 @@ function drawDungeon() {
         ctx.fillStyle = `rgba(255, 215, 0, ${ig})`;
         ctx.beginPath(); ctx.ellipse(ip.x, ip.y - 5, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
         drawIsoBox((DG.ROOM_W/2)*T - 4, (DG.ROOM_H/2)*T - 4, 8, 8, 8, '#FFD700', '#CC9900', '#996600');
+    }
+
+    // Enemy drops (floating pickups)
+    for (const it of DG.items) {
+        const ip = worldToIso(it.x, it.y);
+        const fy = Math.sin(time * 0.08) * 3;
+        const glow = 0.5 + Math.sin(time * 0.06) * 0.2;
+        ctx.fillStyle = it.type === 'health' ? `rgba(255,68,136,${glow})` : `rgba(255,215,0,${glow})`;
+        ctx.beginPath(); ctx.ellipse(ip.x, ip.y + fy - 5, 8, 5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = it.type === 'health' ? '#FF4488' : '#FFD700';
+        ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(it.type === 'health' ? '\u2665' : '\u2605', ip.x, ip.y + fy - 3);
+        ctx.textAlign = 'left';
     }
 
     // Lamps in corners for moody lighting
@@ -3077,8 +3437,8 @@ function drawDungeon() {
             drawCharBody(ebx, eby, darkenColor(e.color, 0.7), e.color, 'down', false, 0);
             drawCharHead(ebx, eby, e.color, 'down', false, 0);
 
-            // Magic wand (sprite type aims at player)
-            if (e.type === 'sprite' || e.type === 'boss') {
+            // Magic wand (ALL fairies have wands)
+            {
                 const wa = e.wandAngle || 0;
                 const wIso = Math.atan2((Math.cos(wa) + Math.sin(wa)) * 0.5, Math.cos(wa) - Math.sin(wa));
                 ctx.save();
@@ -3130,11 +3490,27 @@ function drawDungeon() {
             // Sparkle trail
             ctx.fillStyle = 'rgba(255,215,0,0.3)';
             ctx.beginPath(); ctx.arc(pp.x, pp.y, 5, 0, Math.PI * 2); ctx.fill();
+        } else if (p.isArrow) {
+            // Arrow projectile — rotated line with arrowhead
+            ctx.save(); ctx.translate(pp.x, pp.y);
+            const aAngle = Math.atan2((p.dx + p.dy) * 0.5, p.dx - p.dy);
+            ctx.rotate(aAngle);
+            // Shaft
+            ctx.fillStyle = '#DAA520'; ctx.fillRect(-6, -1, 10, 2);
+            // Arrowhead
+            ctx.fillStyle = '#FFEE88';
+            ctx.beginPath(); ctx.moveTo(5, -3); ctx.lineTo(8, 0); ctx.lineTo(5, 3); ctx.closePath(); ctx.fill();
+            // Fletching
+            ctx.fillStyle = '#FF88AA'; ctx.fillRect(-7, -2, 2, 1); ctx.fillRect(-7, 1, 2, 1);
+            ctx.restore();
+            // Trail glow
+            ctx.fillStyle = 'rgba(255,215,0,0.2)';
+            ctx.beginPath(); ctx.arc(pp.x, pp.y, 4, 0, Math.PI * 2); ctx.fill();
         } else {
-            // Regular projectile (player halo shot)
-            ctx.fillStyle = p.isPlayer ? '#FFD700' : '#FF69B4';
+            // Enemy projectile
+            ctx.fillStyle = '#FF69B4';
             ctx.beginPath(); ctx.arc(pp.x, pp.y, p.size / 2, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = p.isPlayer ? 'rgba(255,215,0,0.3)' : 'rgba(255,105,180,0.3)';
+            ctx.fillStyle = 'rgba(255,105,180,0.3)';
             ctx.beginPath(); ctx.arc(pp.x, pp.y, p.size, 0, Math.PI * 2); ctx.fill();
         }
     }
