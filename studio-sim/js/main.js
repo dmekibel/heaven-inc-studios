@@ -938,17 +938,20 @@ function resize() {
 }
 
 // Zoom steps. Desktop keeps original raw multipliers. Touch targets the
-// SHORTER canvas dimension (width in portrait, height in landscape) so the
-// close view feels equally close in both orientations.
+// SHORTER canvas dimension (width in portrait, height in landscape) and uses
+// slightly different numbers per orientation so each feels balanced.
 const DESKTOP_ZOOMS = [0.6, 1.2, 2.5];
 // far → mid → close, measured in world-pixels across the shorter canvas edge
-const TOUCH_SHORT_TARGETS = [380, 220, 130];
+const TOUCH_PORTRAIT_TARGETS  = [380, 220, 130]; // narrow canvas → tight close works
+const TOUCH_LANDSCAPE_TARGETS = [520, 300, 180]; // wider canvas → back off a bit
 let zoomIndex = 1; // start at middle
 
 function currentZoomLevels() {
     if (IS_TOUCH) {
+        const isPortrait = CANVAS_H > CANVAS_W;
         const shortDim = Math.min(CANVAS_W, CANVAS_H);
-        return TOUCH_SHORT_TARGETS.map(t => shortDim / t);
+        const targets = isPortrait ? TOUCH_PORTRAIT_TARGETS : TOUCH_LANDSCAPE_TARGETS;
+        return targets.map(t => shortDim / t);
     }
     return DESKTOP_ZOOMS;
 }
