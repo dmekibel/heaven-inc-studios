@@ -883,14 +883,29 @@ function resize() {
         canvas.style.transform = 'none';
     }
     ctx.imageSmoothingEnabled = false;
+    // Re-apply zoom so the current step shows the intended world-width
+    // (CANVAS_W just changed — zoom multiplier must re-derive from it).
+    if (typeof camera !== 'undefined' && camera) {
+        const levels = currentZoomLevels();
+        camera.targetZoom = levels[Math.max(0, Math.min(levels.length - 1, zoomIndex))];
+    }
 }
 
-const ZOOM_LEVELS = [0.6, 1.2, 2.5];
-let zoomIndex = 1; // start at 1.2
+// Zoom steps defined by the target WORLD-PIXEL WIDTH visible on screen.
+// far → mid → close. Larger number = see more of the world (zoomed out).
+// This keeps "closest" sensible across very different canvas widths
+// (narrow portrait phone vs wide desktop letterbox).
+const ZOOM_TARGET_WORLD_WIDTHS = [1200, 720, 480];
+let zoomIndex = 1; // start at 720 world-pixels visible
+
+function currentZoomLevels() {
+    return ZOOM_TARGET_WORLD_WIDTHS.map(w => CANVAS_W / w);
+}
 
 function zoomStep(dir) {
-    zoomIndex = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, zoomIndex + dir));
-    camera.targetZoom = ZOOM_LEVELS[zoomIndex];
+    const levels = currentZoomLevels();
+    zoomIndex = Math.max(0, Math.min(levels.length - 1, zoomIndex + dir));
+    camera.targetZoom = levels[zoomIndex];
 }
 
 let zoomCooldown = 0;
